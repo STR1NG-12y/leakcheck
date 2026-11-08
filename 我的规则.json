@@ -1,0 +1,45 @@
+{
+  "_说明": "以 base=default 为基础追加自定义规则；删掉不需要的条目即可。规则按顺序匹配，首个命中生效。",
+  "base": "default",
+  "rules": [
+    {
+      "name": "排除-备份盘",
+      "exclude": true,
+      "prefixes": ["e:/backup", "f:/bak"],
+      "segments": ["回收站", "过期归档"]
+    },
+    {
+      "name": "公司法务",
+      "tag": "contract",
+      "severity": "high",
+      "segments": ["公司法务", "法务部", "合同归档", "诉讼"]
+    },
+    {
+      "name": "项目源码",
+      "tag": "code",
+      "severity": "high",
+      "prefixes": ["d:/work/src", "d:/platform"],
+      "segments": ["核心代码", "主干分支"]
+    },
+    {
+      "name": "图纸",
+      "tag": "design",
+      "severity": "high",
+      "extensions": ["dwg", "dxf", "rvt"],
+      "segments": ["图纸", "施工图", "bim"]
+    },
+    {
+      "name": "招标资料",
+      "tag": "contract",
+      "severity": "high",
+      "segments": ["招标", "投标", "标书"]
+    },
+    {
+      "name": "员工薪酬",
+      "tag": "hr",
+      "severity": "high",
+      "globs": ["*薪酬*", "*工资表*"],
+      "segments": ["薪酬", "工资表", "绩效"]
+    }
+  ]
+}

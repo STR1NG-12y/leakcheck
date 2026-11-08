@@ -1,0 +1,23 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ---- 运行时产物 ----
+*.idx          # 索引文件：含原文，绝对不要提交
+alerts.jsonl
+*.log
+
+# ---- 系统 / 编辑器 ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# ---- 本地测试残留 ----
+.sensiguard_*/
+.quickstart/
+tests/_tmp/
+dist/

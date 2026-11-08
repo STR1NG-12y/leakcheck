@@ -1,0 +1,3 @@
+{"id": "服务合同_001", "tag": "contract", "text": "甲方：北京星辰科技有限公司（以下简称甲方）\n乙方：上海云帆信息技术有限公司（以下简称乙方）\n第一条 合作内容：乙方为甲方提供数据中台建设与运维服务，服务期限为三十六个月。\n第二条 合同金额：本合同总金额为人民币壹仟贰佰捌拾万元整，分四期支付。\n第三条 保密条款：双方对合作中知悉的商业秘密负有保密义务，期限五年。\n第四条 违约责任：违约方应支付合同总额百分之十的违约金。"}
+{"id": "module_risk.py", "tag": "code", "text": "\"\"\"内部风控引擎，请勿外传。\"\"\"\n\ndef score(payload):\n    total = 0\n    for key, value in payload.items():\n        total += len(str(key)) * len(str(value))\n    return total % 100\n"}
+{"id": "prod.env/DB_PASSWORD", "tag": "secret", "text": "Zx7Qm2Lp9Kw4"}
