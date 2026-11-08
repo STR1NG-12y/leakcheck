@@ -28,7 +28,12 @@ PAYLOAD_MAX_BYTES = 16 * 1024 * 1024  # 单条明文文件读取上限
 
 def _load_policy(args) -> PathPolicy:
     """统一的策略构造：--policy 打底，--keywords 追加到最前（优先级最高）。"""
-    policy = PathPolicy.load(args.policy) if getattr(args, "policy", None) else PathPolicy()
+    policy_path = getattr(args, "policy", None)
+    if policy_path:
+        _require_file(policy_path, "规则文件")
+        policy = PathPolicy.load(policy_path)
+    else:
+        policy = PathPolicy()
     kw = getattr(args, "keywords", None)
     if kw:
         if not Path(kw).exists():
@@ -99,6 +104,12 @@ def fmt_hit(hit, payload_text: str = "") -> str:
             f"    片段：{snippet}…")
 
 
+def _require_file(path: str, what: str) -> None:
+    """用户给的路径必须存在，否则给一句人话，而不是抛 Python 堆栈。"""
+    if path and not Path(path).exists():
+        raise SystemExit(f"找不到{what}：{path}")
+
+
 # ------------------------------------------------------------------ 子命令
 def cmd_build(args) -> int:
     cfg = Config(k=args.k, w=args.w)
@@ -106,18 +117,21 @@ def cmd_build(args) -> int:
     policy = _load_policy(args)
 
     if args.dir:
+        _require_file(args.dir, "目录")
         docs, stats = collect([args.dir], policy)
         print("路径扫描:", json.dumps(stats.to_dict(), ensure_ascii=False))
         if not docs:
             raise SystemExit("路径策略筛完没有剩下可索引的文件"
                              "（用 `python -m leakcheck paths --path ...` 查看判定原因）")
     elif args.from_list:
+        _require_file(args.from_list, "清单文件")
         paths = read_path_list(args.from_list)
         docs, stats = collect(paths, policy, force=True)
         print(f"清单 {len(paths)} 条 →", json.dumps(stats.to_dict(), ensure_ascii=False))
         if not docs:
             raise SystemExit("清单里没有可读取的文本文件（检查路径是否存在、是否为二进制）")
     else:
+        _require_file(args.docs, "敏感内容文件")
         docs = load_docs(args.docs)
 
     matched = matcher.add_many(docs)
@@ -153,6 +167,7 @@ def cmd_paths(args) -> int:
 
 
 def cmd_match(args) -> int:
+    _require_file(args.index, "索引文件（先运行 build 建索引）")
     matcher = Matcher.load(args.index)
     if args.min_run and args.min_run != matcher.cfg.min_run:
         matcher.cfg = matcher.cfg.with_(min_run=args.min_run)
@@ -209,7 +224,11 @@ def cmd_judge(args) -> int:
     if (args.text or args.file) and not args.index:
         raise SystemExit("要做内容二次确认，必须用 --index 指定索引")
 
+    if args.index:
+        _require_file(args.index, "索引文件（先运行 build 建索引）")
     matcher = Matcher.load(args.index) if args.index else None
+    if args.from_list:
+        _require_file(args.from_list, "清单文件")
     listed = read_path_list(args.from_list) if args.from_list else []
     judge = Judge(matcher, policy, listed=listed)
 
