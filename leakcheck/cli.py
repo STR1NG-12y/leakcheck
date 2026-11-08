@@ -31,6 +31,9 @@ def _load_policy(args) -> PathPolicy:
     policy = PathPolicy.load(args.policy) if getattr(args, "policy", None) else PathPolicy()
     kw = getattr(args, "keywords", None)
     if kw:
+        if not Path(kw).exists():
+            raise SystemExit(f"找不到关键词文件：{kw}\n"
+                             f"（相对路径按当前目录解析：{Path.cwd()}）")
         rules = rules_from_keywords(kw)
         if not rules:
             raise SystemExit(f"关键词文件里没有可用关键词：{kw}")
