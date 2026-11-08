@@ -5,7 +5,8 @@ __pycache__/
 venv/
 
 # ---- 运行时产物 ----
-*.idx          # 索引文件：含原文，绝对不要提交
+# 索引文件里是敏感原文的副本，绝对不要提交
+*.idx
 alerts.jsonl
 *.log
 
@@ -20,4 +21,3 @@ Thumbs.db
 .sensiguard_*/
 .quickstart/
 tests/_tmp/
-dist/
