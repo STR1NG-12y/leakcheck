@@ -47,7 +47,7 @@ class TestClassify(unittest.TestCase):
         self.assertEqual(self.kind(r"C:\app\config\.env"), (True, "secret", "密钥"))
 
     def test_secret_ssh_key(self) -> None:
-        self.assertTrue(self.kind(r"C:\Users\LZY\.ssh\id_rsa")[0])
+        self.assertTrue(self.kind(r"C:\Users\demo\.ssh\id_rsa")[0])
 
     def test_data_csv(self) -> None:
         self.assertEqual(self.kind(r"D:\财务\客户名单.csv")[1], "data")
