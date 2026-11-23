@@ -29,6 +29,25 @@ class Config:
     nfkc: bool = True
     collapse_ws: bool = True
     lower: bool = False
+    # ---- 索引与聚合限流（取代 max_hits 的日常作用）----
+    max_dup_per_doc: int = 64      # 同一 (doc, k-gram) 最多登记几个位置
+    max_deltas_per_pos: int = 8    # 每个待检测位置最多开几个新桶
+    bucket_keep: int = 128         # 每个桶保留首/末各多少个点
+    max_verify_per_doc: int = 64   # 每份文档最多做多少次逐字符校验
+    # ---- 骨架层（二阶）----
+    sk_k: int = 8                  # 骨架 token 窗口
+    sk_w: int = 4                  # 骨架抽稀窗口
+    sk_min_run: int = 16           # 骨架命中所需的最少 token 数
+    sk_lcs: float = 0.6            # 骨架命中后，字符级 LCS 相似度门槛
+    # ---- 语义层（三阶）----
+    sw_top_k: int = 3              # Smith-Waterman 最多跑几个候选
+    sw_window: int = 200           # 局部对齐的窗口半径（字符）
+    sw_band: int = 32              # banded SW 的带宽
+    sw_min_len: int = 16           # SW 对齐出这么长才算证据
+    stage3_budget_ms: int = 200    # 单条文本三阶时间预算
+    rerank: bool = False           # 是否启用 cross-encoder 精排（默认为关）
+    # ---- OCR ----
+    ocr_min_run: int = 16          # 来自 OCR 的块，告警门槛可以更低
     # ---- 资源上限 ----
     max_text_chars: int = 2_000_000  # 单条文本处理上限
 
@@ -45,6 +64,14 @@ class Config:
             raise ValueError("coverage 必须在 (0, 1] 内")
         if self.short_min_len < 2:
             raise ValueError("short_min_len 太小")
+        if self.max_dup_per_doc < 1:
+            raise ValueError("max_dup_per_doc 必须 >= 1")
+        if self.max_deltas_per_pos < 1:
+            raise ValueError("max_deltas_per_pos 必须 >= 1")
+        if self.bucket_keep < 1:
+            raise ValueError("bucket_keep 必须 >= 1")
+        if self.sk_k < 2 or self.sk_w < 1:
+            raise ValueError("骨架层的 sk_k / sk_w 不合法")
 
     # ------------------------------------------------------------ 派生量
     @property

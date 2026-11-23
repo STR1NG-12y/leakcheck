@@ -51,6 +51,7 @@ class Index:
         self._short: list[tuple[str, int]] = []  # (模式串, doc_idx)
         self._ac: AhoCorasick | None = None
         self.fp_count = 0
+        self.dup_skipped = 0          # 因 max_dup_per_doc 被跳过的高频 k-gram 命中数
 
     # ------------------------------------------------------------ 写入
     def add(self, doc_id: str, text: str, tag: str = "", path: str = "") -> int:
@@ -70,7 +71,17 @@ class Index:
         # 长内容 → 指纹
         if len(text) >= self.cfg.guarantee_len:
             added = 0
+            cap = self.cfg.max_dup_per_doc
+            seen: dict[str, int] = {}
             for pos, h in fingerprint(text, self.cfg):
+                # 同一 (doc, k-gram) 最多登记 cap 个位置：
+                # 重复段落不再无限膨胀，但保留前 cap 个连续位置，对角线仍成立。
+                gram = text[pos:pos + self.cfg.k]
+                n = seen.get(gram, 0)
+                if n >= cap:
+                    self.dup_skipped += 1
+                    continue
+                seen[gram] = n + 1
                 bucket = self.postings.get(h)
                 if bucket is None:
                     self.postings[h] = [pack(idx, pos)]
@@ -144,8 +155,8 @@ class Index:
         }
 
     # ------------------------------------------------------------ 持久化
-    def save(self, path: str | Path) -> None:
-        payload = {
+    def to_payload(self) -> dict:
+        return {
             "version": _INDEX_VERSION,
             "cfg": self.cfg.to_dict(),
             "names": self.names,
@@ -155,11 +166,9 @@ class Index:
             "postings": self.postings,
             "short": self._short,
         }
-        Path(path).write_bytes(pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL))
 
     @classmethod
-    def load(cls, path: str | Path) -> "Index":
-        payload = pickle.loads(Path(path).read_bytes())
+    def from_payload(cls, payload: dict) -> "Index":
         if payload.get("version") != _INDEX_VERSION:
             raise ValueError("索引版本不匹配（旧索引缺少 path 字段），请重建")
         cfg = _config_from(payload["cfg"])
@@ -174,9 +183,20 @@ class Index:
         idx.fp_count = sum(len(b) for b in idx.postings.values())
         return idx
 
+    def save(self, path: str | Path) -> None:
+        Path(path).write_bytes(pickle.dumps(self.to_payload(),
+                                            protocol=pickle.HIGHEST_PROTOCOL))
+
+    @classmethod
+    def load(cls, path: str | Path) -> "Index":
+        return cls.from_payload(pickle.loads(Path(path).read_bytes()))
+
 
 def _config_from(data: dict) -> Config:
     fields = ("k", "w", "min_run", "min_hits", "coverage", "max_gap_mult",
               "short_min_len", "short_min_run", "nfkc", "collapse_ws", "lower",
-              "max_text_chars")
+              "max_text_chars", "max_dup_per_doc", "max_deltas_per_pos",
+              "bucket_keep", "sk_k", "sk_w", "sk_min_run", "sk_lcs",
+              "sw_top_k", "sw_window", "sw_band", "sw_min_len",
+              "stage3_budget_ms", "rerank", "ocr_min_run")
     return Config(**{f: data[f] for f in fields if f in data})

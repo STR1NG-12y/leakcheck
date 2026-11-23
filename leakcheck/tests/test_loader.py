@@ -64,10 +64,12 @@ class TestCollect(unittest.TestCase):
         self.assertEqual(docs, [])
         self.assertTrue(stats.errors)
 
-    def test_unsupported_suffix_skipped(self) -> None:
+    def test_broken_office_file_skipped(self) -> None:
+        """坏掉的 docx：现在会尝试解析，解析失败按"读不出文本"跳过。"""
         (self.root / "合同" / "扫描件.docx").write_bytes(b"PK\x03\x04fake")
         docs, stats = collect([str(self.root)], self.policy)
-        self.assertEqual(stats.skipped_suffix, 1)
+        self.assertEqual(stats.skipped_suffix, 0)
+        self.assertEqual(stats.skipped_binary, 1)
         self.assertNotIn("合同/扫描件.docx", [d[0] for d in docs])
 
     def test_secret_file_split_by_value(self) -> None:

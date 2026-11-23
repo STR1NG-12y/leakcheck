@@ -13,7 +13,7 @@ from __future__ import annotations
 from .align import Cluster
 from .types import Span
 
-MAX_EXTEND = 4096  # 单侧最大延伸，防止在超长重复文本上退化成 O(n^2)
+MAX_EXTEND = 1024  # 单侧最大延伸，防止在超长重复文本上退化成 O(n^2)
 
 
 def _match_at(doc: str, payload: str, doc_pos: int, payload_pos: int, k: int = 8) -> bool:

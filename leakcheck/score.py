@@ -65,7 +65,12 @@ def build_hits(payload_id: str, payload_text: str, clusters: list[Cluster],
     from .verify import verify_cluster
 
     by_doc: dict[int, list[Cluster]] = {}
+    # 先做廉价筛选：长度不足 min_run/2 的簇不可能满足任何一条规则
+    # （规则②要求 longest >= min_run/2），提前丢弃可以省掉昂贵的逐字符校验。
+    floor = max(cfg.min_run // 2, 1)
     for cluster in clusters:
+        if cluster.length < floor and cluster.hits < cfg.min_hits:
+            continue
         by_doc.setdefault(cluster.doc_idx, []).append(cluster)
 
     payload_len = max(len(payload_text), 1)
@@ -73,14 +78,20 @@ def build_hits(payload_id: str, payload_text: str, clusters: list[Cluster],
 
     for doc_idx, group in by_doc.items():
         doc_text = index.text_of(doc_idx)
+        # 每个文档只校验最有希望的若干簇：按跨度、再按指纹数排序。
+        # 校验是整条链最贵的环节（逐字符扩展），而真正被复制的段一定跨度最长。
+        group.sort(key=lambda c: (c.length, c.hits), reverse=True)
         spans: list[Span] = []
         total_fp = 0
-        for cluster in group:
+        best_len = 0
+        for cluster in group[: cfg.max_verify_per_doc]:
             span = verify_cluster(cluster, doc_text, payload_text, cfg.k)
             if span is None:
                 continue
             spans.append(span)
             total_fp += cluster.hits
+            # 校验时延伸有上限（成本考虑），簇自身的跨度是「至少这么长」的下界
+            best_len = max(best_len, span.length, cluster.length)
         if not spans:
             continue
 
@@ -88,7 +99,7 @@ def build_hits(payload_id: str, payload_text: str, clusters: list[Cluster],
         matched = union_len((s.doc_start, s.doc_end) for s in merged)
         cov_payload = union_len((s.payload_start, s.payload_end) for s in merged) / payload_len
         cov_doc = matched / max(len(doc_text), 1)
-        longest = max(s.length for s in merged)
+        longest = max(best_len, max(s.length for s in merged))
 
         long_rule = longest >= cfg.min_run and total_fp >= cfg.min_hits
         cov_rule = (cov_payload >= cfg.coverage

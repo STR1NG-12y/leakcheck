@@ -15,6 +15,10 @@ from pathlib import Path
 
 from .pathpolicy import PathPolicy
 
+#: 这些格式虽然二进制，但能靠解析库取出文字
+OFFICE_SUFFIXES = (".docx", ".xlsx", ".pptx", ".pdf",
+                   ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp")
+
 # 已知读不出文本的格式：直接跳过，不去尝试解码
 BINARY_SUFFIXES = (
     ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".rtf", ".odt",
@@ -22,6 +26,20 @@ BINARY_SUFFIXES = (
     ".zip", ".rar", ".7z", ".gz", ".tar", ".exe", ".dll", ".so", ".bin",
     ".db", ".sqlite", ".mdb", ".mp3", ".mp4", ".mov", ".avi", ".psd", ".fig",
 )
+
+
+def _read_office(path: Path) -> str | None:
+    """用 T0 解析层读取 Office/PDF 文本；缺依赖时返回 None。"""
+    try:
+        from .parse import parse
+    except Exception:                              # noqa: BLE001
+        return None
+    try:
+        parsed = parse(path)
+    except Exception:                              # noqa: BLE001
+        return None
+    text = "\n\n".join(b.text for b in parsed.blocks)
+    return text or None
 
 
 @dataclass
@@ -119,10 +137,17 @@ def collect(paths: list[str], policy: PathPolicy,
             if not decision.sensitive and not force:
                 continue
             stats.sensitive += 1
-            if path.suffix.lower() in BINARY_SUFFIXES:
+            suffix = path.suffix.lower()
+            if suffix in BINARY_SUFFIXES and suffix not in OFFICE_SUFFIXES:
                 stats.skipped_suffix += 1
                 continue
-            text = read_text(path, max_bytes)
+            if suffix in OFFICE_SUFFIXES:
+                text = _read_office(path)
+                if text is None:
+                    stats.skipped_binary += 1
+                    continue
+            else:
+                text = read_text(path, max_bytes)
             if text is None:
                 stats.skipped_binary += 1
                 continue

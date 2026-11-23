@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import pickle
 from pathlib import Path
 from typing import Iterable
 
@@ -27,6 +28,7 @@ class Matcher:
     def __init__(self, cfg: Config | None = None) -> None:
         self.cfg = cfg or Config()
         self.index = Index(self.cfg)
+        self.last_warnings: list[str] = []   # 最近一次 match() 的降级提示
 
     # ------------------------------------------------------------ 建索引
     def add(self, doc_id: str, text: str, tag: str = "", path: str = "") -> int:
@@ -46,6 +48,7 @@ class Matcher:
     # ------------------------------------------------------------ 检测
     def match(self, text: str, payload_id: str = "") -> list[Hit]:
         """判断一条待上传明文是否包含本地敏感内容。"""
+        self.last_warnings = []
         if not text or self.index.doc_count == 0:
             return []
         norm = normalize(text, self.cfg)
@@ -59,9 +62,14 @@ class Matcher:
         # 支路一：长内容（指纹 + 倒排 + 对角线）
         fps = fingerprint(norm, self.cfg)
         if fps:
-            acc = RunAccumulator(self.cfg.k, self.cfg.max_gap)
+            acc = RunAccumulator(
+                self.cfg.k, self.cfg.max_gap,
+                max_deltas_per_pos=self.cfg.max_deltas_per_pos,
+                bucket_keep=self.cfg.bucket_keep,
+            )
             acc.extend(self.index.hits(fps))
             hits.extend(build_hits(payload_id, norm, acc.finish(), self.index, self.cfg))
+            self.last_warnings.extend(acc.warnings())
 
         # 支路二：短内容（精确匹配）
         found = self.index.short_find(norm)
@@ -126,7 +134,12 @@ class Matcher:
 
     @classmethod
     def load(cls, path: str | Path) -> "Matcher":
-        index = Index.load(path)
+        # 索引有两种形态：单层（老）与两阶（新，含骨架索引）。
+        # 只做逐字比对时，从两阶索引里取出 matcher 部分即可。
+        payload = pickle.loads(Path(path).read_bytes())
+        if isinstance(payload, dict) and payload.get("kind") == "cascade":
+            payload = payload["matcher"]
+        index = Index.from_payload(payload)
         matcher = cls(index.cfg)
         matcher.index = index
         return matcher
