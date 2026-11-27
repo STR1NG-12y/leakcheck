@@ -105,6 +105,14 @@ class TestSecretUnits(unittest.TestCase):
 
         self.assertEqual(secret_units("k.pem", "-----BEGIN KEY-----"), [("k.pem", "secret", "-----BEGIN KEY-----")])
 
+    def test_duplicate_keys_get_unique_ids(self) -> None:
+        """同一文件里 host/password 出现多次，id 不能撞车。"""
+        from leakcheck.loader import secret_units
+        text = "[a]\nhost = 10.0.0.1\npassword = abcdefgh\n[b]\nhost = 10.0.0.2\n"
+        ids = [u[0] for u in secret_units("keys.txt", text)]
+        self.assertEqual(len(ids), len(set(ids)), f"id 重复: {ids}")
+
+
 
 if __name__ == "__main__":
     unittest.main()

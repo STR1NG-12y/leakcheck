@@ -24,7 +24,7 @@ class Config:
     max_gap_mult: int = 4  # 同一对角线上允许的最大指纹间隔 = max_gap_mult * k
     # ---- 短内容支路 ----
     short_min_len: int = 8   # 短于该长度不登记（避免"的、了"这类噪音）
-    short_min_run: int = 6   # 短模式命中后，片段至少这么长才报
+    short_min_run: int = 12  # 短模式命中后，片段至少这么长才报（太短会噪声）
     # ---- 归一化开关 ----
     nfkc: bool = True
     collapse_ws: bool = True

@@ -125,6 +125,20 @@ class Tooltip:
             self._tip = None
 
 
+#: 选择索引文件时的过滤器（之前漏了 .idx，导致对话框里什么都看不到）
+IDX_TYPES = [("索引文件", "*.idx"), ("所有文件", "*.*")]
+
+#: 普通文档
+DOC_TYPES = [("常见文档", "*.txt *.md *.csv *.docx *.pdf *.xlsx *.pptx *.json *.py *.js *.ts"),
+             ("所有文件", "*.*")]
+
+#: 待检测内容：文本 + Office + PDF + 图片
+PAYLOAD_TYPES = [("可检测文件",
+                  "*.txt *.md *.csv *.json *.log *.docx *.pdf *.xlsx *.pptx "
+                  "*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp"),
+                 ("所有文件", "*.*")]
+
+
 class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
@@ -143,6 +157,8 @@ class App(tk.Tk):
         self.worker: threading.Thread | None = None
         self._job_failed = False
         self._source_map: dict = {}
+        self._source_binding: dict = {}
+        self._source_buttons: dict = {}
         self.current_page = "build"
 
         self._ensure_data_files()
@@ -165,23 +181,33 @@ class App(tk.Tk):
         path = filedialog.askdirectory(title=title, initialdir=str(initial or ROOT))
         if path:
             var.set(path)
+            self._source_follow(var)
 
-    def _choose_files(self, var, title: str, initial: Path | None = None) -> None:
+    def _choose_files(self, var, title: str, initial: Path | None = None,
+                      filetypes=None) -> None:
         paths = filedialog.askopenfilenames(
             title=title, initialdir=str(initial or ROOT),
-            filetypes=[("常见文档", "*.txt *.md *.csv *.docx *.pdf *.xlsx *.pptx *.json *.py *.js *.ts"),
-                       ("所有文件", "*.*")])
+            filetypes=filetypes or DOC_TYPES)
         if paths:
             var.set(" ; ".join(paths))
+            self._source_follow(var)
 
-    def _path_picker(self, var, title: str, initial: Path | None = None):
+    def _source_follow(self, var) -> None:
+        """选完文件后自动切到对应的数据来源。"""
+        hit = self._source_binding.get(id(var))
+        if hit is not None:
+            self._set_source(*hit)
+
+    def _path_picker(self, var, title: str, initial: Path | None = None,
+                     filetypes=None):
         """返回给 _form_row 用的 browse 回调：点一下弹菜单，可选目录或文件。"""
         def pick(btn: tk.Button) -> None:
             menu = tk.Menu(self, tearoff=0)
             menu.add_command(label="选择文件夹…",
                              command=lambda: self._choose_dir(var, title, initial))
             menu.add_command(label="选择文件（可多选）…",
-                             command=lambda: self._choose_files(var, title, initial))
+                             command=lambda: self._choose_files(var, title, initial,
+                                                                filetypes))
             try:
                 menu.tk_popup(btn.winfo_rootx(),
                               btn.winfo_rooty() + btn.winfo_height())
@@ -363,45 +389,69 @@ class App(tk.Tk):
         return card
 
     def _source_row(self, card: tk.Frame, var: tk.StringVar) -> None:
-        """数据来源二选一：用索引 还是 直接扫敏感资料。"""
+        """数据来源二选一。
+
+        用两段式按钮而不是单选钮：按钮的 command 一定会触发，
+        不用赌 Tk 的默认按键绑定；选中的一段有底色，状态一眼可见。
+        """
         row = tk.Frame(card, bg=CARD)
         row.pack(fill="x", padx=20, pady=(14, 2))
         tk.Label(row, text="数据来源", bg=CARD, fg=TEXT, font=FONT,
                  width=13, anchor="w").pack(side="left")
+
+        buttons: dict[str, tk.Button] = {}
         for value, label in (("index", "用索引"),
                              ("dir", "直接扫敏感资料")):
-            tk.Radiobutton(row, text=label, value=value, variable=var,
-                           bg=CARD, fg=TEXT, activebackground=CARD,
-                           selectcolor=CARD, font=FONT_SMALL,
-                           highlightthickness=0, bd=0,
-                           command=lambda v=var: self._apply_source(v)).pack(
-                side="left", padx=(0, 16))
+            btn = tk.Button(row, text=label, font=FONT_SMALL, relief="flat",
+                            bd=0, padx=14, pady=4, cursor="hand2",
+                            command=lambda v=value: self._set_source(var, v))
+            btn.pack(side="left", padx=(0, 6))
+            buttons[value] = btn
+
+        self._source_buttons[id(var)] = buttons
         hint = tk.Label(card, text="", bg=CARD, fg=MUTED,
                         font=("Microsoft YaHei UI", 8), anchor="w")
         hint.pack(fill="x", padx=20, pady=(0, 2))
         return hint
 
+    def _set_source(self, var, value: str) -> None:
+        """切换数据来源：单选、灰掉的输入框、选择文件都走这里。"""
+        try:
+            var.set(value)
+        except tk.TclError:
+            return
+        self._apply_source(var)
+
     def _apply_source(self, var) -> None:
-        """只把不参与的那一项文字调灰，不禁用——免得看不清也点不动。"""
+        """未选中的那项灰掉，但点一下就能切过去，不会卡住。"""
         entries, hint = self._source_map.get(id(var), ([], None))
         if len(entries) < 2:
             return
         index_mode = var.get() == "index"
 
-        def set_state(entry: tk.Entry, active: bool) -> None:
+        def set_state(entry: tk.Entry, active: bool, value: str) -> None:
             if active:
                 entry.configure(state="normal", fg=TEXT, bg=CARD)
             else:
                 entry.configure(state="disabled",
                                 disabledbackground="#ECEEF1",
                                 disabledforeground="#9AA0A6")
+            entry.bind("<Button-1>",
+                       lambda _e, v=var, val=value: self._set_source(v, val))
             btn = getattr(entry, "_browse_btn", None)
-            if btn is not None:
-                btn.configure(state="normal" if active else "disabled",
-                              fg=TEXT if active else "#B0B4BA")
+            if btn is not None:                     # 选择… 始终可点，点了自动切换
+                btn.configure(state="normal",
+                              fg=TEXT if active else "#8C9199")
 
-        set_state(entries[0], index_mode)
-        set_state(entries[1], not index_mode)
+        set_state(entries[0], index_mode, "index")
+        set_state(entries[1], not index_mode, "dir")
+
+        for value, btn in self._source_buttons.get(id(var), {}).items():
+            active = (value == var.get())
+            btn.configure(bg=ACCENT if active else "#EDF0F4",
+                          fg="white" if active else MUTED,
+                          activebackground=ACCENT if active else "#E2E6EB",
+                          activeforeground="white" if active else TEXT)
         if hint is not None:
             hint.config(
                 text="当前只用索引，下面「敏感资料」不参与比对"
@@ -468,7 +518,7 @@ class App(tk.Tk):
         page = tk.Frame(self.main, bg=BG)
         self._title(page, "建立索引",
                     "按路径规则扫描一个目录，把敏感文件的指纹存进索引。"
-                    "关键词表可选：词出现在路径里就判为敏感。")
+                    "你选中的文件一律算敏感；关键词只用来提示待检测文档的路径。")
         card = self._card(page)
 
         self.build_dir = tk.StringVar()
@@ -532,8 +582,8 @@ class App(tk.Tk):
     def _page_scan(self) -> tk.Frame:
         page = tk.Frame(self.main, bg=BG)
         self._title(page, "两阶扫描",
-                    "逐字 → 骨架：抓同义改写和语序调整。"
-                    "填了索引文件就直接用 ① 建好的库，不用再扫目录。")
+                    "逐字 → 骨架：抓同义改写和语序调整。选中什么就比对什么，"
+                    "不再按关键词筛选敏感资料。")
         card = self._card(page)
 
         self.scan_index = tk.StringVar(value=str(INDEX) if INDEX.exists() else "")
@@ -543,16 +593,19 @@ class App(tk.Tk):
         hint = self._source_row(card, self.scan_source)
         e_index = self._form_row(card, "索引", self.scan_index,
                                  self._path_picker(self.scan_index,
-                                                   "选择索引（.idx）", DATA_INDEX))
+                                                   "选择索引（.idx）", DATA_INDEX,
+                                                   IDX_TYPES))
         e_dir = self._form_row(card, "敏感资料", self.scan_dir,
                                self._path_picker(self.scan_dir,
                                                  "选择敏感资料（文件夹或文件）",
                                                  DATA_SENSITIVE))
         self._source_map[id(self.scan_source)] = ([e_index, e_dir], hint)
+        self._source_binding[id(self.scan_index)] = (self.scan_source, "index")
+        self._source_binding[id(self.scan_dir)] = (self.scan_source, "dir")
         self._apply_source(self.scan_source)
         self._form_row(card, "待检测文件", self.scan_file,
-                      lambda _btn: self._pick_file_for(
-                          self.scan_file, "选择待检测文件"))
+                       self._path_picker(self.scan_file, "选择待检测内容",
+                                         DATA_PAYLOAD, PAYLOAD_TYPES))
         self.btn_scan = self._primary(card, "开始扫描", self.run_scan)
         return page
 
@@ -608,12 +661,15 @@ class App(tk.Tk):
         hint = self._source_row(card, self.screen_source)
         e_index = self._form_row(card, "索引", self.screen_index,
                                  self._path_picker(self.screen_index,
-                                                   "选择索引（.idx）", DATA_INDEX))
+                                                   "选择索引（.idx）", DATA_INDEX,
+                                                   IDX_TYPES))
         e_dir = self._form_row(card, "敏感资料", self.screen_dir,
                                self._path_picker(self.screen_dir,
                                                  "选择敏感资料（文件夹或文件）",
                                                  DATA_SENSITIVE))
         self._source_map[id(self.screen_source)] = ([e_index, e_dir], hint)
+        self._source_binding[id(self.screen_index)] = (self.screen_source, "index")
+        self._source_binding[id(self.screen_dir)] = (self.screen_source, "dir")
         self._apply_source(self.screen_source)
         self._form_row(card, "待检测文件", self.screen_file,
                       lambda _btn: self._pick_file_for(
@@ -644,7 +700,8 @@ class App(tk.Tk):
     def _page_keywords(self) -> tk.Frame:
         page = tk.Frame(self.main, bg=BG)
         self._title(page, "关键词",
-                    "关键词只看路径（目录名/文件名），命中即判为敏感；改完记得重建索引。")
+                    "关键词只看路径：用来标记待检测文档的路径是否敏感，"
+                    "不影响敏感资料的收录。")
         card = self._card(page)
 
         self.kw_file = tk.StringVar(value=str(KEYWORDS))
@@ -838,15 +895,19 @@ class App(tk.Tk):
         self.result_hint = tk.Label(head, text="还没有运行任务", bg=CARD, fg=MUTED,
                                     font=FONT_SMALL)
         self.result_hint.pack(side="left", padx=12)
+        self.time_lbl = tk.Label(head, text="", bg=CARD, fg=MUTED, font=FONT_SMALL)
+        self.time_lbl.pack(side="right", padx=12)
 
-        cols = ("item", "result", "detail")
+        cols = ("item", "result", "detail", "cost")
         self.tree = ttk.Treeview(frame, columns=cols, show="headings", height=6)
         self.tree.heading("item", text="项目")
         self.tree.heading("result", text="结果")
         self.tree.heading("detail", text="说明")
-        self.tree.column("item", width=250, anchor="w")
-        self.tree.column("result", width=90, anchor="w")
-        self.tree.column("detail", width=440, anchor="w")
+        self.tree.heading("cost", text="耗时")
+        self.tree.column("item", width=230, anchor="w")
+        self.tree.column("result", width=84, anchor="w")
+        self.tree.column("detail", width=400, anchor="w")
+        self.tree.column("cost", width=90, anchor="e")
         self.tree.tag_configure("ok", foreground=GREEN)
         self.tree.tag_configure("bad", foreground=RED)
         self.tree.tag_configure("warn", foreground=ORANGE)
@@ -904,33 +965,33 @@ class App(tk.Tk):
             return text or None
         return read_text(path, 16 * 1024 * 1024)
 
-    def _collect_any(self, roots: list[str], policy) -> list[tuple[str, str, str]]:
-        """手动选的文件一律收录；目录按路径规则（敏感资料目录下则全收）。"""
-        docs: list[tuple[str, str, str]] = []
+    def _collect_any(self, roots: list[str]) -> list[tuple[str, str, str]]:
+        """收录用户选中的资料。
 
-        def accept(path: Path, forced: bool) -> None:
-            decision = policy.check(str(path))
-            if not decision.sensitive and not forced:
-                return
-            if path.suffix.lower() in {".exe", ".dll", ".zip", ".7z", ".rar",
-                                       ".png", ".jpg", ".jpeg", ".gif", ".mp4",
-                                       ".mp3", ".iso", ".bin"}:
+        规则很简单：**只要是你选的，就当敏感资料**——不再用关键词/路径规则
+        二次判断。路径规则只在 ② 页做单点查询，关键词只用来标注待检测文档
+        的路径是否敏感。
+        """
+        docs: list[tuple[str, str, str]] = []
+        skip = {".exe", ".dll", ".zip", ".7z", ".rar", ".mp4", ".mp3",
+                ".iso", ".bin", ".pyc"}
+
+        def accept(path: Path) -> None:
+            if path.suffix.lower() in skip:
                 return
             text = self._read_any(path)
-            if not text:
+            if not text or not text.strip():
                 return
-            tag = decision.tag if decision.sensitive else "listed"
-            docs.append((path.name, tag, text))
+            docs.append((path.name, "已收录", text))
 
         for raw in roots:
             path = Path(raw)
             if path.is_file():
-                accept(path, True)
+                accept(path)
             elif path.is_dir():
-                forced = self._under_sensitive(raw)
                 for child in sorted(path.rglob("*")):
                     if child.is_file():
-                        accept(child, forced)
+                        accept(child)
         return docs
 
     @staticmethod
@@ -950,6 +1011,7 @@ class App(tk.Tk):
 
     def _set_status(self, text: str, color: str = MUTED) -> None:
         self.status.config(text=text, fg=color)
+        self._status_detail = text
 
     # ------------------------------------------------------------ 后台任务
     def _start_job(self, name: str, fn) -> None:
@@ -959,6 +1021,8 @@ class App(tk.Tk):
         self._clear_results()
         self._job_failed = False
         self._source_map: dict = {}
+        self._source_binding: dict = {}
+        self._source_buttons: dict = {}
         self.result_hint.config(text=name)
         self.progress.pack(side="right", padx=16, pady=9)
         self.progress.start(12)
@@ -979,16 +1043,22 @@ class App(tk.Tk):
             while True:
                 kind, payload = self.events.get_nowait()
                 if kind == "row":
-                    item, result, detail, tag = payload       # type: ignore[misc]
-                    self.tree.insert("", "end", values=(item, result, detail),
+                    item, result, detail, tag, cost = payload   # type: ignore[misc]
+                    self.tree.insert("", "end", values=(item, result, detail, cost),
                                      tags=(tag,))
                 elif kind == "done":
                     self.progress.stop()
                     self.progress.pack_forget()
                     if not getattr(self, "_job_failed", False):
-                        self._set_status(f"完成：{payload}", GREEN)
+                        detail = getattr(self, "_status_detail", "")
+                        self._set_status(detail or f"完成：{payload}", GREEN)
                     self.dot.config(fg=GREEN)
                     self._refresh_header()
+                elif kind == "status":
+                    self._status_detail = str(payload)
+                    self._set_status(str(payload))
+                elif kind == "timing":
+                    self.time_lbl.config(text=str(payload))
                 elif kind == "warn":
                     self._job_failed = True
                     self.progress.stop()
@@ -1007,8 +1077,6 @@ class App(tk.Tk):
                     if not self.scan_index.get().strip():
                         self.scan_index.set(str(path))
                     self.events.put(("status", f"索引已保存 → {self._short(path)}"))
-                elif kind == "status":
-                    self._set_status(str(payload))
         except queue.Empty:
             pass
         self.after(80, self._drain)
@@ -1017,8 +1085,9 @@ class App(tk.Tk):
         for item in self.tree.get_children():
             self.tree.delete(item)
 
-    def _row(self, item: str, result: str, detail: str = "", tag: str = "muted") -> None:
-        self.events.put(("row", (item, result, detail, tag)))
+    def _row(self, item: str, result: str, detail: str = "", tag: str = "muted",
+             cost: str = "") -> None:
+        self.events.put(("row", (item, result, detail, tag, cost)))
 
     # ------------------------------------------------------------ 任务：建索引
     def run_build(self) -> None:
@@ -1041,7 +1110,7 @@ class App(tk.Tk):
                 policy.prepend_includes(rules_from_keywords(kw))
             # 用户把文件放进「我的资料\敏感文件」就是"我认为它敏感"，
             # 不再让路径规则二次筛选，否则 .txt/.md 这类会被漏掉。
-            docs = self._collect_any(roots, policy)
+            docs = self._collect_any(roots)
             if not docs:
                 self.events.put(("warn", "没有读到任何内容：\n"
                                  "- docx/pdf 需要解析库（打包版已内置）\n"
@@ -1092,66 +1161,95 @@ class App(tk.Tk):
 
     # ------------------------------------------------------------ 任务：语义筛选
     def run_screen(self) -> None:
+        use_index = self.screen_source.get() == "index"
+        index = self.screen_index.get().strip() if use_index else ""
         directory = self.screen_dir.get().strip()
-        target = self.screen_file.get().strip()
-        if not directory or not Path(directory.split(";")[0].strip()).exists():
+        targets = self._split_paths(self.screen_file.get())
+
+        if use_index:
+            if not index:
+                messagebox.showwarning("提示", "选了「用索引」，但索引路径是空的")
+                self._clear_results()
+                self._set_status("未开始：没有索引", RED)
+                return
+            if not Path(index).exists():
+                messagebox.showwarning("提示", "索引文件不存在，请重新选择")
+                self._clear_results()
+                self._set_status("未开始：索引路径无效", RED)
+                return
+        elif not directory or not Path(directory.split(";")[0].strip()).exists():
             messagebox.showwarning("提示", "请先选择敏感资料（文件夹或文件）")
             self._clear_results()
             self._set_status("未开始：没有敏感资料", RED)
             return
-        if not target or not Path(target).exists():
-            messagebox.showwarning("提示", "请选择待检测文件")
+
+        if not targets or not any(Path(t).exists() for t in targets):
+            messagebox.showwarning("提示", "请选择待检测文件或文件夹")
             self._clear_results()
             self._set_status("未开始：没有待检测文件", RED)
             return
 
         def job() -> None:
+            import time
+
             from .vector_screen import VectorScreen, make_embedder
+            t0 = time.perf_counter()
             policy = PathPolicy()
             if KEYWORDS.exists():
                 from .pathpolicy import rules_from_keywords
                 policy.prepend_includes(rules_from_keywords(KEYWORDS))
-            docs = self._collect_any(self._split_paths(directory), policy)
+            if index:
+                from .matcher import Matcher
+                idx = Matcher.load(index).index
+                docs = [(idx.names[i], idx.tags[i] if i < len(idx.tags) else "",
+                         idx.texts[i]) for i in range(len(idx.names))]
+            else:
+                docs = self._collect_any(self._split_paths(directory))
 
             screen = VectorScreen(self.cfg, make_embedder("auto"), min_score=0.55)
             for doc_id, tag, text in docs:
                 screen.add(doc_id, text, tag, doc_id)
+            t_index = time.perf_counter() - t0
 
-            parsed = parse(target)
-            payload = "\n\n".join(b.text for b in parsed.blocks)
-            hits = screen.search(payload, top_k=5)
-            mode = "语义" if screen.semantic else "降级（无模型）"
-
-            if not hits:
-                self._row(Path(target).name, "无线索",
-                          f"没有块的相似度达到 0.55（后端：{screen.backend_name}）", "ok")
-                self.events.put(("status", "语义筛选完成：没有线索"))
+            files = list(self._iter_payloads(targets))
+            if not files:
+                self.events.put(("warn", "选中的内容里没有可识别的文字"))
                 return
 
-            for hit in hits:
-                band, _color, tag = self._score_band(hit.score)
-                snippet = hit.chunk.replace("\n", " ")[:52]
-                self._row(hit.doc_id, f"{hit.score:.0%}",
-                          f"{band} · 第{hit.chunk_index + 1}块 · {snippet}…",
-                          tag)
-            top = hits[0].score
-            self.events.put(("status",
-                             f"线索 {len(hits)} 条，最高 {top:.0%}（仅供参考，不是证据）"))
+            total = 0
+            for name, payload, path in files:
+                hint = self._payload_sensitive_hint(path) if path else ""
+                t1 = time.perf_counter()
+                hits = screen.search(payload, top_k=5)
+                cost = f"{(time.perf_counter() - t1) * 1000:.1f} ms"
+                if not hits:
+                    detail = f"没有块的相似度达到 0.55（后端：{screen.backend_name}）"
+                    if hint:
+                        detail += f"　·　{hint}"
+                    self._row(name, "无线索", detail, "ok", cost)
+                    continue
+                total += len(hits)
+                for hit in hits:
+                    band, _color, tag = self._score_band(hit.score)
+                    snippet = hit.chunk.replace("\n", " ")[:52]
+                    self._row(hit.doc_id, f"{hit.score:.0%}",
+                              f"{band} · 第{hit.chunk_index + 1}块 · {snippet}…",
+                              tag, cost)
+
+            cost = time.perf_counter() - t0
+            self.events.put(("timing", f"线索 {total} 条 · 用时 {cost * 1000:.0f} ms"
+                                       f"（建库 {t_index * 1000:.0f} ms）"))
+            self.events.put(("status", f"完成：语义筛选 · {len(files)} 份待检测，"
+                                       f"线索 {total} 条 · 用时 {cost * 1000:.0f} ms"))
 
         self._start_job("语义筛选", job)
 
-    # ------------------------------------------------------------ 任务：三阶扫描
+    # ------------------------------------------------------------ 任务：两阶扫描
     def run_scan(self) -> None:
-        target = self.scan_file.get().strip()
-        if not target or not Path(target).exists():
-            messagebox.showwarning("提示", "请选择待检测文件")
-            self._clear_results()
-            self._set_status("未开始：没有待检测文件", RED)
-            return
-
         use_index = self.scan_source.get() == "index"
         index = self.scan_index.get().strip() if use_index else ""
         directory = self.scan_dir.get().strip()
+        targets = self._split_paths(self.scan_file.get())
 
         if use_index:
             if not index:
@@ -1172,15 +1270,23 @@ class App(tk.Tk):
                 self._clear_results()
                 self._set_status("未开始：索引路径无效", RED)
                 return
-        else:
-            if not directory or not Path(directory.split(";")[0].strip()).exists():
-                messagebox.showwarning("提示", "选了「直接扫敏感资料」，但没选资料")
-                self._clear_results()
-                self._set_status("未开始：没有敏感资料", RED)
-                return
+        elif not directory or not Path(directory.split(";")[0].strip()).exists():
+            messagebox.showwarning("提示", "选了「直接扫敏感资料」，但没选资料")
+            self._clear_results()
+            self._set_status("未开始：没有敏感资料", RED)
+            return
+
+        if not targets or not any(Path(t).exists() for t in targets):
+            messagebox.showwarning("提示", "请选择待检测文件或文件夹")
+            self._clear_results()
+            self._set_status("未开始：没有待检测文件", RED)
+            return
 
         def job() -> None:
+            import time
+
             from .cascade import LEVEL_DESC, Cascade
+            t0 = time.perf_counter()
             if index:
                 casc = Cascade.load(index)
                 self.events.put(("status", f"已加载索引：{len(casc)} 份"))
@@ -1190,57 +1296,111 @@ class App(tk.Tk):
                 if KEYWORDS.exists():
                     from .pathpolicy import rules_from_keywords
                     policy.prepend_includes(rules_from_keywords(KEYWORDS))
-                docs = self._collect_any(self._split_paths(directory), policy)
+                docs = self._collect_any(self._split_paths(directory))
                 casc = Cascade(self.cfg)
                 for doc_id, tag, text in docs:
                     casc.add(doc_id, text, tag, doc_id)
                 doc_count = len(docs)
+            t_index = time.perf_counter() - t0
+
+            files = list(self._iter_payloads(targets))
+            if not files:
+                self.events.put(("warn", "选中的内容里没有可识别的文字"))
+                return
 
             total_hits = 0
-            for name, payload in self._iter_payloads(Path(target)):
+            for name, payload, path in files:
+                hint = self._payload_sensitive_hint(path) if path else ""
+                t1 = time.perf_counter()
                 result = casc.scan(payload, name)
+                cost = f"{(time.perf_counter() - t1) * 1000:.1f} ms"
                 if not result.findings:
-                    self._row(name, "放行", "没有发现重合内容", "ok")
+                    detail = "没有发现重合内容"
+                    if hint:
+                        detail += f"　·　{hint}"
+                    self._row(name, "放行", detail, "ok", cost)
                     continue
                 total_hits += 1
+                seen = set()
                 for item in result.findings:
+                    # 骨架/语义命中如果回原文只有几个字，证据太弱，不占一行
+                    if item.level != "A" and item.length < 12:
+                        continue
+                    key = (item.level, item.doc_id, item.length)
+                    if key in seen:                 # 同一份文档的同类命中只列一次
+                        continue
+                    seen.add(key)
                     self._row(name, f"{item.level} 级",
                               f"{item.doc_id} · {LEVEL_DESC.get(item.level, '')} · "
-                              f"{item.length} 字", "bad")
+                              f"{item.length} 字", "bad", cost)
+                if hint:
+                    self._row(name, "提示", hint, "warn", cost)
                 for warn in result.warnings:
-                    self._row(name, "注意", warn, "warn")
+                    self._row(name, "注意", warn, "warn", cost)
 
-            self.events.put(("status", f"{doc_count} 份敏感资料，命中 {total_hits} 条"))
+            cost = time.perf_counter() - t0
+            self.events.put(("timing", f"命中 {total_hits} / {len(files)} 份 · "
+                                       f"用时 {cost * 1000:.0f} ms"
+                                       f"（建库 {t_index * 1000:.0f} ms）"))
+            self.events.put(("status", f"完成：两阶扫描 · {doc_count} 份敏感资料，"
+                                       f"{len(files)} 份待检测，命中 {total_hits} 条"
+                                       f" · 用时 {cost * 1000:.0f} ms"))
 
         self._start_job("两阶扫描", job)
 
-    def _iter_payloads(self, target: Path):
-        """把待检测目标展开成 (名称, 文本)：支持单文件 / 目录 / .jsonl。"""
-        if target.is_dir():
-            for file in sorted(target.rglob("*")):
-                if not file.is_file():
-                    continue
-                text = read_text(file, 16 * 1024 * 1024)
-                if text is not None:
-                    yield file.name, text
-            return
+    def _payload_sensitive_hint(self, path: Path) -> str:
+        """关键词只用来判断待检测文档的路径敏不敏感。"""
+        try:
+            policy = PathPolicy()
+            if KEYWORDS.exists():
+                from .pathpolicy import rules_from_keywords
+                policy.prepend_includes(rules_from_keywords(KEYWORDS))
+            decision = policy.check(str(path))
+        except Exception:                        # noqa: BLE001
+            return ""
+        if decision.sensitive:
+            return f"路径敏感（{decision.reason}）"
+        return ""
 
-        if target.suffix.lower() == ".jsonl":
-            for line in target.read_text(encoding="utf-8", errors="replace").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
+    def _iter_payloads(self, targets):
+        """把待检测目标展开成 (名称, 文本)：支持多文件 / 目录 / .jsonl。"""
+        if isinstance(targets, (str, Path)):
+            targets = [targets]
+        for raw in targets:
+            target = Path(str(raw).strip().strip('"'))
+            if not str(target).strip():
+                continue
+            if target.is_dir():
+                for file in sorted(target.rglob("*")):
+                    if not file.is_file():
+                        continue
+                    text = self._read_any(file)
+                    if text:
+                        yield file.name, text, file
+                continue
+
+            if target.suffix.lower() == ".jsonl":
                 try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
+                    lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+                except OSError:
                     continue
-                yield obj.get("id", "?"), obj.get("text", "")
-            return
+                for line in lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    yield str(obj.get("id", "?")), str(obj.get("text", "")), None
+                continue
 
-        parsed = parse(target)
-        for warn in parsed.warnings:
-            self._row("提示", "注意", warn, "warn")
-        yield target.name, "\n\n".join(b.text for b in parsed.blocks)
+            if not target.exists():
+                self._row(target.name, "跳过", "文件不存在", "warn")
+                continue
+            text = self._read_any(target)
+            if text:
+                yield target.name, text, target
 
 
 def _setup_temp() -> None:

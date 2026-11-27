@@ -130,7 +130,7 @@ def cmd_build(args) -> int:
 
     if args.dir:
         _require_file(args.dir, "目录")
-        docs, stats = collect([args.dir], policy, force=bool(getattr(args, "all", False)))
+        docs, stats = collect([args.dir], policy, force=True)
         print("路径扫描:", json.dumps(stats.to_dict(), ensure_ascii=False))
         if not docs:
             raise SystemExit("路径策略筛完没有剩下可索引的文件"
@@ -460,7 +460,7 @@ def cmd_scan(args) -> int:
         pass
     elif args.dir:
         _require_file(args.dir, "目录")
-        docs, stats = collect([args.dir], policy, force=bool(getattr(args, "all", False)))
+        docs, stats = collect([args.dir], policy, force=True)
         print("路径扫描:", json.dumps(stats.to_dict(), ensure_ascii=False))
         if not docs:
             raise SystemExit("路径策略筛完没有剩下可索引的文件")
@@ -530,12 +530,23 @@ def cmd_scan(args) -> int:
 
 def _iter_payloads(target: Path):
     """展开待检测目标：目录 / .jsonl / 单文件。逐个产出 (名称, 文本)。"""
+    from .parse import parse
+
     if target.is_dir():
+        rich = {".pdf", ".docx", ".xlsx", ".pptx",
+                ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
         for file in sorted(target.rglob("*")):
             if not file.is_file():
                 continue
-            text = read_text(file, PAYLOAD_MAX_BYTES)
-            if text is not None:
+            if file.suffix.lower() in rich:          # 目录里的图片/Office 也要能扫
+                try:
+                    parsed = parse(file)
+                    text = "\n\n".join(b.text for b in parsed.blocks)
+                except Exception:                    # noqa: BLE001
+                    continue
+            else:
+                text = read_text(file, PAYLOAD_MAX_BYTES)
+            if text is not None and text.strip():
                 yield file.name, text
         return
 
@@ -584,7 +595,7 @@ def cmd_screen(args) -> int:
         print(f"已加载索引：{args.index}（{len(idx.names)} 份）")
     elif args.dir:
         _require_file(args.dir, "目录")
-        docs, stats = collect([args.dir], policy, force=bool(getattr(args, "all", False)))
+        docs, stats = collect([args.dir], policy, force=True)
         print("路径扫描:", json.dumps(stats.to_dict(), ensure_ascii=False))
         if not docs:
             raise SystemExit("路径策略筛完没有剩下可索引的文件")

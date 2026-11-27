@@ -67,6 +67,7 @@ def secret_units(rel_id: str, text: str, min_len: int = 8) -> list[tuple[str, st
     而真实泄露往往是单独一个密码值，所以这里拆成 ``KEY=VALUE`` 的右侧部分。
     """
     units: list[tuple[str, str, str]] = []
+    seen: dict[str, int] = {}                    # 同一个 key 出现多次（host/password 很常见）
     for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
@@ -76,7 +77,10 @@ def secret_units(rel_id: str, text: str, min_len: int = 8) -> list[tuple[str, st
                 key, value = line.split(sep, 1)
                 value = value.strip().strip('"').strip("'")
                 if len(value) >= min_len:
-                    units.append((f"{rel_id}#{key.strip()}", "secret", value))
+                    base = f"{rel_id}#{key.strip()}"
+                    seen[base] = seen.get(base, 0) + 1
+                    unit_id = base if seen[base] == 1 else f"{base}~{seen[base]}"
+                    units.append((unit_id, "secret", value))
                 break
     return units or [(rel_id, "secret", text)]
 
