@@ -69,3 +69,26 @@ class TestPublicRef(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TestPiiCustomRules(unittest.TestCase):
+    def test_parse_rule_with_pipe_in_regex(self) -> None:
+        rules, errors = pii.parse_rules_text(
+            "病历号 | (?:病历号|住院号)\\s*[:：]?\\s*([A-Z]{0,2}\\d{6,10}) | | P0")
+        self.assertEqual(errors, [])
+        self.assertEqual(len(rules), 1)
+        self.assertEqual(rules[0][0], "病历号")
+        self.assertIn("|", rules[0][1])          # 正则里的 | 没被拆掉
+
+    def test_bad_rule_reported(self) -> None:
+        rules, errors = pii.parse_rules_text("坏行\n等级错 | (x) | | P9")
+        self.assertEqual(rules, [])
+        self.assertEqual(len(errors), 2)
+
+    def test_custom_rule_hits(self) -> None:
+        rules = [("病历号", r"(?:病历号|住院号)\s*[:：]?\s*([A-Z]{0,2}\d{6,10})", "", "P0")]
+        hits = pii.scan("患者病历号：ZY2026001234", rules)
+        self.assertTrue(any(h.kind == "病历号" and h.level == "P0" for h in hits))
+
+    def test_custom_rule_ignored_when_invalid(self) -> None:
+        hits = pii.scan("普通的一句话", [("坏", "([", "", "P0")])
+        self.assertEqual([h for h in hits if h.kind == "坏"], [])

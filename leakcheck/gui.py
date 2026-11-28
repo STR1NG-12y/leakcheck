@@ -128,6 +128,9 @@ class Tooltip:
 #: 公共引用库（名言/法条等），放在程序目录下
 PUBLIC_REF = ROOT / "公共引用.txt"
 
+#: 隐私规则（用户可编辑）
+PRIVACY_RULES = ROOT / "隐私规则.txt"
+
 #: 选择索引文件时的过滤器（之前漏了 .idx，导致对话框里什么都看不到）
 IDX_TYPES = [("索引文件", "*.idx"), ("所有文件", "*.*")]
 
@@ -241,7 +244,13 @@ class App(tk.Tk):
 
 
     def _ensure_data_files(self) -> None:
-        """首次运行自动生成关键词表，避免界面上显示"不存在"。"""
+        """首次运行自动生成关键词表与隐私规则，避免界面上显示"不存在"。"""
+        if not PRIVACY_RULES.exists():
+            try:
+                from .pii import DEFAULT_RULES
+                PRIVACY_RULES.write_text(DEFAULT_RULES, encoding="utf-8")
+            except Exception:                      # noqa: BLE001
+                pass
         if not KEYWORDS.exists():
             try:
                 KEYWORDS.write_text(DEFAULT_KEYWORDS, encoding="utf-8")
@@ -333,7 +342,8 @@ class App(tk.Tk):
             ("scan", "③", "两阶扫描"),
             ("screen", "④", "语义筛选"),
             ("keywords", "⑤", "关键词"),
-            ("about", "⑥", "设置"),
+            ("privacy", "⑥", "隐私规则"),
+            ("about", "⑦", "设置"),
         ]
         for key, num, label in items:
             btn = tk.Button(self.sidebar, text=f"  {num}  {label}", anchor="w",
@@ -364,6 +374,7 @@ class App(tk.Tk):
         self.pages["scan"] = self._page_scan()
         self.pages["screen"] = self._page_screen()
         self.pages["keywords"] = self._page_keywords()
+        self.pages["privacy"] = self._page_privacy()
         self.pages["about"] = self._page_about()
 
     def show_page(self, key: str) -> None:
@@ -790,6 +801,126 @@ class App(tk.Tk):
             return
         self._set_status(f"已保存 {path.name}（{len(text.splitlines())} 行）")
 
+    # ------------------------------------------------------------ 页面：隐私规则
+    def _page_privacy(self) -> tk.Frame:
+        page = tk.Frame(self.main, bg=BG)
+        self._title(page, "隐私规则",
+                    "一行一条：类型 | 正则 | 校验 | 等级（P0/P1/P2）。"
+                    "校验填 id（身份证）或 luhn（银行卡），不需要就留空。")
+
+        card = self._card(page)
+        self.pv_file = tk.StringVar(value=str(PRIVACY_RULES))
+        row0 = tk.Frame(card, bg=CARD)
+        row0.pack(fill="x", padx=20, pady=(16, 6))
+        tk.Label(row0, text="规则文件", bg=CARD, fg=TEXT, font=FONT,
+                 width=13, anchor="w").pack(side="left")
+        tk.Entry(row0, textvariable=self.pv_file, font=FONT_SMALL, bg=FIELD, fg=TEXT,
+                 relief="flat", highlightthickness=1, highlightbackground=BORDER,
+                 highlightcolor=ACCENT).pack(side="left", fill="x", expand=True, ipady=5)
+
+        self.pv_text = tk.Text(card, height=6, font=("Consolas", 10), bg=FIELD, fg=TEXT,
+                               relief="flat", highlightthickness=1,
+                               highlightbackground=BORDER, wrap="none")
+        self.pv_text.pack(fill="x", padx=20, pady=(6, 8))
+        self.pv_text.insert("1.0", self._read_privacy_rules())
+
+        row = tk.Frame(card, bg=CARD)
+        row.pack(fill="x", padx=20, pady=(0, 12))
+        tk.Button(row, text="保存", command=self.save_privacy_rules, bg=ACCENT,
+                  fg="white", relief="flat", bd=0,
+                  font=("Microsoft YaHei UI", 10, "bold"), padx=20, pady=6,
+                  cursor="hand2").pack(side="left")
+        tk.Button(row, text="重新加载", command=self.reload_privacy_rules, bg=CARD,
+                  fg=TEXT, relief="flat", highlightbackground=BORDER,
+                  highlightthickness=1, bd=0, font=FONT_SMALL, padx=14, pady=5,
+                  cursor="hand2").pack(side="left", padx=8)
+        tk.Button(row, text="恢复默认", command=self.reset_privacy_rules, bg=CARD,
+                  fg=TEXT, relief="flat", highlightbackground=BORDER,
+                  highlightthickness=1, bd=0, font=FONT_SMALL, padx=14, pady=5,
+                  cursor="hand2").pack(side="left")
+
+        # 测试区
+        test_card = self._card(page)
+        tk.Label(test_card, text="试一段文本", bg=CARD, fg=TEXT, font=FONT,
+                 anchor="w").pack(fill="x", padx=20, pady=(14, 4))
+        self.pv_input = tk.Text(test_card, height=3, font=FONT_SMALL, bg=FIELD,
+                                fg=TEXT, relief="flat", highlightthickness=1,
+                                highlightbackground=BORDER, wrap="word")
+        self.pv_input.pack(fill="x", padx=20)
+        self.pv_input.insert("1.0", "客户张伟，身份证号码：110101199003071233，手机 13800138000。")
+        tk.Button(test_card, text="测试", command=self.test_privacy_rules, bg=CARD,
+                  fg=TEXT, relief="flat", highlightbackground=BORDER,
+                  highlightthickness=1, bd=0, font=FONT_SMALL, padx=16, pady=5,
+                  cursor="hand2").pack(anchor="w", padx=20, pady=8)
+        self.pv_out = tk.Text(test_card, height=4, font=("Consolas", 10), bg="#FAFBFC",
+                              fg=TEXT, relief="flat", highlightthickness=1,
+                              highlightbackground=BORDER, wrap="word", state="disabled")
+        self.pv_out.pack(fill="x", padx=20, pady=(0, 14))
+        return page
+
+    def _privacy_path(self) -> Path:
+        raw = self.pv_file.get().strip()
+        return Path(raw) if raw else PRIVACY_RULES
+
+    def _read_privacy_rules(self) -> str:
+        path = self._privacy_path()
+        if path.exists():
+            return path.read_text(encoding="utf-8", errors="replace")
+        from .pii import DEFAULT_RULES
+        return DEFAULT_RULES
+
+    def reload_privacy_rules(self) -> None:
+        self.pv_text.delete("1.0", "end")
+        self.pv_text.insert("1.0", self._read_privacy_rules())
+        self._set_status(f"已加载 {self._privacy_path().name}")
+
+    def save_privacy_rules(self) -> None:
+        path = self._privacy_path()
+        text = self.pv_text.get("1.0", "end")
+        from .pii import parse_rules_text
+        rules, errors = parse_rules_text(text)
+        if errors:
+            messagebox.showwarning(
+                "有规则写错了",
+                "\n".join(errors[:6]) + ("\n…" if len(errors) > 6 else "")
+                + "\n\n其余规则照常保存，写错的行会被忽略。")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        except OSError as exc:
+            messagebox.showerror("保存失败", f"{exc}\n\n{path}")
+            return
+        self._set_status(f"已保存 {path.name}（{len(text.splitlines())} 行，"
+                         f"有效规则 {len(rules)} 条）")
+
+    def reset_privacy_rules(self) -> None:
+        from .pii import DEFAULT_RULES
+        self.pv_text.delete("1.0", "end")
+        self.pv_text.insert("1.0", DEFAULT_RULES)
+        self._set_status("已恢复默认规则（记得点保存）")
+
+    def test_privacy_rules(self) -> None:
+        from .pii import parse_rules_text, scan as pii_scan2
+        text = self.pv_input.get("1.0", "end").strip()
+        rules, errors = parse_rules_text(self.pv_text.get("1.0", "end"))
+        hits = pii_scan2(text, rules)
+        lines = []
+        if not text:
+            lines.append("（没有输入文本）")
+        elif not hits:
+            lines.append("没有命中任何隐私规则。")
+        else:
+            for hit in hits:
+                lines.append(f"{hit.level}  {hit.kind:<6} {hit.masked:<22} {hit.reason}")
+        if errors:
+            lines.append("")
+            lines.append("规则问题：" + "；".join(errors[:3]))
+        self.pv_out.configure(state="normal")
+        self.pv_out.delete("1.0", "end")
+        self.pv_out.insert("1.0", "\n".join(lines))
+        self.pv_out.configure(state="disabled")
+        self._set_status(f"测试完成：命中 {len(hits)} 处")
+
     # ------------------------------------------------------------ 页面：设置
     def _page_about(self) -> tk.Frame:
         page = tk.Frame(self.main, bg=BG)
@@ -948,7 +1079,8 @@ class App(tk.Tk):
 
     def _run_current(self) -> None:
         mapping = {"build": self.run_build, "paths": self.run_paths,
-                   "scan": self.run_scan, "screen": self.run_screen}
+                   "scan": self.run_scan, "screen": self.run_screen,
+                   "privacy": self.save_privacy_rules}
         action = mapping.get(self.current_page)
         if action:
             action()
@@ -1221,11 +1353,14 @@ class App(tk.Tk):
                 self.events.put(("warn", "选中的内容里没有可识别的文字"))
                 return
 
+            from . import pii as pii_mod
+            pii_rules = pii_mod.load_rules(PRIVACY_RULES)
             total = 0
             for name, payload, path in files:
                 hint = self._payload_sensitive_hint(path) if path else ""
                 t1 = time.perf_counter()
                 hits = screen.search(payload, top_k=5)
+                pii_hits = pii_mod.scan(payload, pii_rules)
                 cost = f"{(time.perf_counter() - t1) * 1000:.1f} ms"
                 if not hits:
                     detail = f"没有块的相似度达到 0.55（后端：{screen.backend_name}）"
@@ -1233,6 +1368,11 @@ class App(tk.Tk):
                         detail += f"　·　{hint}"
                     self._row(name, "无线索", detail, "ok", cost)
                     continue
+                for pii_hit in pii_hits:
+                    tag = {"P0": "bad", "P1": "warn", "P2": "muted"}[pii_hit.level]
+                    self._row(name, f"{pii_hit.level} 隐私",
+                              f"{pii_hit.kind}（{pii_hit.masked}）· "
+                              f"{pii_mod.LEVEL_DESC[pii_hit.level]}", tag, cost)
                 total += len(hits)
                 for hit in hits:
                     band, _color, tag = self._score_band(hit.score)
@@ -1321,6 +1461,7 @@ class App(tk.Tk):
                 return
 
             from . import pii as pii_mod
+            pii_rules = pii_mod.load_rules(PRIVACY_RULES)
             ref = self._ref_lib()
             total_hits = 0
             pii_total = 0
@@ -1328,7 +1469,7 @@ class App(tk.Tk):
                 hint = self._payload_sensitive_hint(path) if path else ""
                 t1 = time.perf_counter()
                 result = casc.scan(payload, name)
-                pii_hits = pii_mod.scan(payload)
+                pii_hits = pii_mod.scan(payload, pii_rules)
                 cost = f"{(time.perf_counter() - t1) * 1000:.1f} ms"
 
                 # 公共引用（名言/法条）不算泄露

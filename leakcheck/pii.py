@@ -109,8 +109,51 @@ def _context(text: str, start: int, end: int, words) -> int:
     return sum(1 for w in words if w in window)
 
 
-def scan(text: str) -> list[PiiHit]:
-    """扫一段文本，返回隐私命中（已按等级排序、已去重）。"""
+def _validate(check: str, value: str) -> bool:
+    if check == "id":
+        return valid_id18(value)
+    if check == "luhn":
+        return valid_luhn(value)
+    return True
+
+
+def parse_rules_text(text: str) -> tuple[list[tuple[str, str, str, str]], list[str]]:
+    """解析规则文本，返回 (规则, 错误说明)。一行一条：类型 | 正则 | 校验 | 等级"""
+    rules: list[tuple[str, str, str, str]] = []
+    errors: list[str] = []
+    for no, line in enumerate(text.splitlines(), 1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        # 从右侧拆：类型 | 正则 | 校验 | 等级，正则里允许出现 |
+        if line.count("|") < 3:
+            errors.append(f"第 {no} 行：需要 4 段（类型|正则|校验|等级）")
+            continue
+        kind_part, rest = line.split("|", 1)
+        left, level = rest.rsplit("|", 1)
+        pattern, check = left.rsplit("|", 1)
+        kind, pattern = kind_part.strip(), pattern.strip()
+        check, level = check.strip(), level.strip()
+        if check not in ("", "id", "luhn"):
+            errors.append(f"第 {no} 行：校验只能是 id / luhn 或留空")
+            continue
+        if level not in ("P0", "P1", "P2"):
+            errors.append(f"第 {no} 行：等级只能是 P0 / P1 / P2")
+            continue
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            errors.append(f"第 {no} 行：正则写错了（{exc}）")
+            continue
+        rules.append((kind, pattern, check, level))
+    return rules, errors
+
+
+def scan(text: str, rules: list[tuple[str, str, str, str]] | None = None) -> list[PiiHit]:
+    """扫一段文本，返回隐私命中（已按等级排序、已去重）。
+
+    ``rules`` 是用户自定义规则，形如 ``(类型, 正则, 校验, 等级)``。
+    """
     hits: list[PiiHit] = []
     taken: list[tuple[int, int]] = []
 
@@ -142,7 +185,24 @@ def scan(text: str) -> list[PiiHit]:
             hits.append(PiiHit(kind, level, value, start, end, reason))
             taken.append((start, end))
 
-    # 2) 弱模式
+    # 2) 用户自定义规则（优先级高于弱模式）
+    for kind, pattern, check, level in (rules or []):
+        try:
+            compiled = re.compile(pattern)
+        except re.error:
+            continue
+        for m in compiled.finditer(text):
+            start, end = m.span(1) if m.groups() else m.span()
+            if overlap(start, end):
+                continue
+            value = re.sub(r"[\s\-]", "", m.group(1) if m.groups() else m.group(0))
+            ok = _validate(check, value)
+            hit_level = level if (ok or level == "P2") else "P1"
+            reason = ("自定义规则" + ("+校验通过" if ok and check else ""))
+            hits.append(PiiHit(kind, hit_level, value, start, end, reason))
+            taken.append((start, end))
+
+    # 3) 弱模式
     for kind, pattern, check in _WEAK:
         for m in re.finditer(pattern, text):
             raw = m.group(1)
@@ -167,7 +227,7 @@ def scan(text: str) -> list[PiiHit]:
                                "弱模式命中" + ("（校验通过）" if ok else "")))
             taken.append((start, end))
 
-    # 3) 上下文调整
+    # 4) 上下文调整
     for hit in hits:
         plus = _context(text, hit.start, hit.end, _CONTEXT_PLUS)
         minus = _context(text, hit.start, hit.end, _CONTEXT_MINUS)
@@ -199,23 +259,24 @@ LEVEL_DESC = {
 }
 
 DEFAULT_RULES = """# 隐私规则（一行一条：类型 | 正则 | 校验 | 等级）
-# 校验可选：id（身份证 mod11-2）、luhn（银行卡）、空
-身份证 | (?:身份证|证件号码)\\s*[:：]?\\s*([0-9]{17}[0-9Xx]) | id | P0
-银行卡 | (?:银行卡|卡号)\\s*[:：]?\\s*([0-9][0-9\\s\\-]{12,25}[0-9]) | luhn | P0
-手机号 | (?:手机|电话)\\s*[:：]?\\s*(1[3-9][0-9]{9}) | | P2
+# 校验只能是 id（身份证 mod11-2）、luhn（银行卡）或留空
+# 等级只能是 P0 / P1 / P2；正则里可以用 |
+#
+# 内置已覆盖：身份证、银行卡、护照、手机号、邮箱、车牌、工号
+# 下面这些是自定义示例，删掉或照着重写都行
+病历号 | (?:病历号|住院号)\\s*[:：]?\\s*([A-Z]{0,2}[0-9]{6,10}) | | P0
+保单号 | (?:保单号|投保单号)\\s*[:：]?\\s*([0-9]{10,20}) | | P1
 """
 
 
+
 def load_rules(path: Path | None) -> list[tuple[str, str, str, str]]:
-    """读用户自定义规则；文件不存在就返回空。"""
+    """读用户自定义规则；文件不存在就返回空。解析不了的坏行会被跳过。"""
     if path is None or not Path(path).exists():
         return []
-    out = []
-    for line in Path(path).read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        parts = [p.strip() for p in line.split("|")]
-        if len(parts) >= 4:
-            out.append((parts[0], parts[1], parts[2], parts[3]))
-    return out
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    rules, _errors = parse_rules_text(text)
+    return rules
