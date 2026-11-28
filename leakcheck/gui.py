@@ -832,77 +832,56 @@ class App(tk.Tk):
     def _page_privacy(self) -> tk.Frame:
         page = tk.Frame(self.main, bg=BG)
         self._title(page, "隐私规则",
-                    "勾选即启用；改动自动保存，右边贴一段文本立刻看效果。")
+                    "勾选即启用，改动自动保存；加规则只要填触发词，不用写正则。")
 
-        wrap = tk.Frame(page, bg=BG)
-        wrap.pack(fill="both", expand=True, padx=28, pady=(0, 12))
+        card = self._card(page)
 
-        # 左：内置类型勾选 + 自定义规则
-        left = tk.Frame(wrap, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
-        left.pack(side="left", fill="both", expand=True, padx=(0, 10))
-
-        tk.Label(left, text="常见类型", bg=CARD, fg=TEXT, font=FONT_H2,
-                 anchor="w").pack(fill="x", padx=16, pady=(12, 4))
+        # ---- 常见类型（两列排）
+        tk.Label(card, text="常见类型", bg=CARD, fg=TEXT, font=FONT_H2,
+                 anchor="w").pack(fill="x", padx=20, pady=(14, 6))
+        grid = tk.Frame(card, bg=CARD)
+        grid.pack(fill="x", padx=14)
         self._pii_vars: dict[str, tk.BooleanVar] = {}
-        for item in PII_TYPES:
+        for idx, item in enumerate(PII_TYPES):
             var = tk.BooleanVar(value=item.key in self.pii.enabled)
-            row = tk.Frame(left, bg=CARD)
-            row.pack(fill="x", padx=16)
-            tk.Checkbutton(row, text=item.name, variable=var, bg=CARD, fg=TEXT,
+            cell = tk.Frame(grid, bg=CARD)
+            cell.grid(row=idx // 2, column=idx % 2, sticky="w", padx=(10, 30), pady=3)
+            tk.Checkbutton(cell, text=item.name, variable=var, bg=CARD, fg=TEXT,
                            activebackground=CARD, selectcolor=FIELD, bd=0,
                            highlightthickness=0, anchor="w", width=8,
                            font=FONT_SMALL,
                            command=lambda k=item.key, v=var: self._toggle_pii(k, v)
                            ).pack(side="left")
-            tag = "校验 " + ("身份证" if item.check == "id" else "银行卡") if item.check else ""
-            tk.Label(row, text=f"{item.level}  {tag}", bg=CARD, fg=MUTED,
+            tag = ("校验 身份证" if item.check == "id"
+                   else "校验 银行卡" if item.check == "luhn" else "")
+            tk.Label(cell, text=f"{item.level}  {tag}", bg=CARD, fg=MUTED,
                      font=("Microsoft YaHei UI", 8), anchor="w").pack(side="left")
             self._pii_vars[item.key] = var
 
-        tk.Frame(left, bg=BORDER, height=1).pack(fill="x", padx=16, pady=(8, 4))
-        head = tk.Frame(left, bg=CARD)
-        head.pack(fill="x", padx=16, pady=(4, 2))
+        # ---- 自定义规则
+        tk.Frame(card, bg=BORDER, height=1).pack(fill="x", padx=20, pady=(12, 8))
+        head = tk.Frame(card, bg=CARD)
+        head.pack(fill="x", padx=20, pady=(0, 6))
         tk.Label(head, text="自定义规则", bg=CARD, fg=TEXT, font=FONT_H2,
                  anchor="w").pack(side="left")
         self._soft_button(head, "＋ 新增规则", self._add_pii_rule,
-                          primary=True, pad=14).pack(side="right", pady=(0, 2))
+                          primary=True, pad=14).pack(side="right")
 
-        self.pii_list = tk.Listbox(left, height=5, font=FONT_SMALL, bg=FIELD, fg=TEXT,
+        self.pii_list = tk.Listbox(card, height=6, font=FONT_SMALL, bg=FIELD, fg=TEXT,
                                    relief="flat", highlightthickness=1,
                                    highlightbackground=BORDER, activestyle="none")
-        self.pii_list.pack(fill="x", padx=16, pady=(2, 4))
+        self.pii_list.pack(fill="both", expand=True, padx=20, pady=(0, 6))
 
-        btns = tk.Frame(left, bg=CARD)
-        btns.pack(fill="x", padx=16, pady=(0, 14))
+        btns = tk.Frame(card, bg=CARD)
+        btns.pack(fill="x", padx=20, pady=(0, 16))
         for text, cmd in (("编辑", self._edit_pii_rule),
                           ("删除", self._delete_pii_rule),
                           ("恢复默认", self._reset_pii_rules)):
             self._soft_button(btns, text, cmd, pad=12).pack(side="left", padx=(0, 8))
-
-        # 右：示例 + 预览
-        right = tk.Frame(wrap, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
-        right.pack(side="left", fill="both", expand=True)
-        tk.Label(right, text="示例文本（边改边看）", bg=CARD, fg=TEXT, font=FONT_H2,
-                 anchor="w").pack(fill="x", padx=16, pady=(12, 4))
-        self.pv_input = tk.Text(right, height=5, font=FONT_SMALL, bg=FIELD, fg=TEXT,
-                                relief="flat", highlightthickness=1,
-                                highlightbackground=BORDER, wrap="word")
-        self.pv_input.pack(fill="x", padx=16)
-        self.pv_input.insert(
-            "1.0", "客户张伟，身份证号码：110101199003071233，手机 13800138000。\n"
-                   "邮箱 zhangsan@example.com，病历号：ZY2026001234。")
-        self.pv_input.bind("<KeyRelease>", lambda _e: self._preview_pii())
-        self.pv_input.bind("<<Paste>>", lambda _e: self.after(50, self._preview_pii))
-
-        tk.Label(right, text="命中", bg=CARD, fg=TEXT, font=FONT_H2,
-                 anchor="w").pack(fill="x", padx=16, pady=(8, 2))
-        self.pv_out = tk.Text(right, height=8, font=("Consolas", 10), bg="#FAFBFC",
-                              fg=TEXT, relief="flat", highlightthickness=1,
-                              highlightbackground=BORDER, wrap="word", state="disabled")
-        self.pv_out.pack(fill="both", expand=True, padx=16, pady=(0, 14))
+        tk.Label(btns, text="改完立即生效，不需要点保存", bg=CARD, fg=MUTED,
+                 font=("Microsoft YaHei UI", 8)).pack(side="left", padx=10)
 
         self._refresh_pii_list()
-        self._preview_pii()
         return page
 
     # -------------------------------------------------- 隐私规则的读写
@@ -921,7 +900,8 @@ class App(tk.Tk):
         else:
             self.pii.enabled.discard(key)
         self._save_pii()
-        self._preview_pii()
+        self._set_status(f"{'已启用' if var.get() else '已停用'}："
+                         f"{next(t.name for t in PII_TYPES if t.key == key)}")
 
     def _refresh_pii_list(self) -> None:
         self.pii_list.delete(0, "end")
@@ -952,7 +932,6 @@ class App(tk.Tk):
         del self.pii.customs[idx]
         self._save_pii()
         self._refresh_pii_list()
-        self._preview_pii()
         self._set_status(f"已删除规则：{kind}")
 
     def _reset_pii_rules(self) -> None:
@@ -962,164 +941,7 @@ class App(tk.Tk):
             var.set(key in self.pii.enabled)
         self._save_pii()
         self._refresh_pii_list()
-        self._preview_pii()
         self._set_status("已恢复默认（内置全开，自定义清空）")
-
-    def _pii_dialog(self, index: int | None) -> None:
-        from .pii import CustomRule
-
-        rule = (self.pii.customs[index] if index is not None
-                else CustomRule("", [], "num", "", "", "P1"))
-
-        win = tk.Toplevel(self)
-        win.title("编辑规则" if index is not None else "新增规则")
-        win.configure(bg=BG)
-        win.transient(self)
-        win.grab_set()
-        win.resizable(False, False)
-
-        # 顶部标题
-        head = tk.Frame(win, bg=BG)
-        head.pack(fill="x", padx=22, pady=(18, 6))
-        tk.Label(head, text="编辑隐私规则" if index is not None else "新增隐私规则",
-                 bg=BG, fg=TEXT, font=FONT_TITLE).pack(anchor="w")
-        tk.Label(head, text="触发词决定在哪种上下文里找；值格式决定找什么样的值。",
-                 bg=BG, fg=MUTED, font=("Microsoft YaHei UI", 8)).pack(anchor="w",
-                                                                      pady=(2, 0))
-
-        card = tk.Frame(win, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
-        card.pack(fill="both", expand=True, padx=22)
-        body = tk.Frame(card, bg=CARD)
-        body.pack(fill="both", expand=True, padx=18, pady=14)
-        body.columnconfigure(1, weight=1)
-
-        kind_var = tk.StringVar(value=rule.kind)
-        trig_var = tk.StringVar(value="，".join(rule.triggers))
-        fmt_var = tk.StringVar(value={"num": "纯数字", "alpha": "字母+数字",
-                                      "id": "身份证", "card": "银行卡",
-                                      "regex": "自定义正则"}.get(rule.fmt, "纯数字"))
-        regex_var = tk.StringVar(value=rule.regex)
-        check_var = tk.StringVar(value={"id": "身份证", "luhn": "银行卡"}.get(rule.check, "无"))
-        level_var = tk.StringVar(value=rule.level)
-        preview_var = tk.StringVar()
-
-        def field(label: str, row: int, hint: str = "") -> None:
-            tk.Label(body, text=label, bg=CARD, fg=TEXT, font=FONT_SMALL,
-                     anchor="w", width=9).grid(row=row, column=0, sticky="w",
-                                               pady=(8, 0), padx=(0, 10))
-            if hint:
-                tk.Label(body, text=hint, bg=CARD, fg=MUTED,
-                         font=("Microsoft YaHei UI", 8), anchor="w").grid(
-                    row=row, column=2, sticky="w", padx=(10, 0), pady=(8, 0))
-
-        def entry(row: int, var: tk.StringVar, font=FONT_SMALL) -> tk.Entry:
-            e = tk.Entry(body, textvariable=var, font=font, bg=FIELD, fg=TEXT,
-                         relief="flat", highlightthickness=1,
-                         highlightbackground=BORDER, highlightcolor=ACCENT)
-            e.grid(row=row, column=1, sticky="ew", pady=(8, 0), ipady=6)
-            return e
-
-        def combo(row: int, var: tk.StringVar, values: list[str]) -> ttk.Combobox:
-            c = ttk.Combobox(body, textvariable=var, values=values, state="readonly",
-                             width=14)
-            c.grid(row=row, column=1, sticky="w", pady=(8, 0))
-            return c
-
-        field("类型名", 0, "会显示在告警里")
-        kind_entry = entry(0, kind_var, FONT)
-        field("触发词", 1, "逗号分隔，如：病历号，住院号")
-        trig_entry = entry(1, trig_var, FONT_SMALL)
-        field("值格式", 2, "决定值长什么样")
-        combo(2, fmt_var, ["纯数字", "字母+数字", "身份证", "银行卡", "自定义正则"])
-        field("自定义正则", 3, "仅上面选「自定义正则」时需要")
-        regex_entry = entry(3, regex_var, ("Consolas", 9))
-        field("校验", 4, "校验位不通过会降为 P1")
-        combo(4, check_var, ["无", "身份证", "银行卡"])
-        field("等级", 5, "P0 建议阻断，P2 只提示")
-        combo(5, level_var, ["P0", "P1", "P2"])
-
-        # 预览
-        preview_box = tk.Frame(body, bg="#F7F9FC", highlightbackground=BORDER,
-                               highlightthickness=1)
-        preview_box.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(14, 2))
-        tk.Label(preview_box, text="实际使用的正则", bg="#F7F9FC", fg=MUTED,
-                 font=("Microsoft YaHei UI", 8), anchor="w").pack(
-            fill="x", padx=12, pady=(8, 0))
-        tk.Label(preview_box, textvariable=preview_var, bg="#F7F9FC", fg=TEXT,
-                 font=("Consolas", 9), anchor="w", justify="left",
-                 wraplength=430).pack(fill="x", padx=12, pady=(2, 10))
-
-        def current() -> CustomRule:
-            fmt = {"纯数字": "num", "字母+数字": "alpha", "身份证": "id",
-                   "银行卡": "card", "自定义正则": "regex"}.get(fmt_var.get(), "num")
-            check = {"无": "", "身份证": "id", "银行卡": "luhn"}[check_var.get()]
-            trig = [t.strip() for t in
-                    trig_var.get().replace("|", "，").split("，") if t.strip()]
-            return CustomRule(kind_var.get().strip(), trig, fmt,
-                              regex_var.get().strip(), check, level_var.get())
-
-        def refresh(_e=None) -> None:
-            regex_entry.configure(
-                state="normal" if fmt_var.get() == "自定义正则" else "disabled",
-                disabledbackground="#ECEEF1", disabledforeground="#9AA0A6")
-            try:
-                preview_var.set(current().pattern())
-            except Exception:                        # noqa: BLE001
-                preview_var.set("（正则有问题，检查一下）")
-
-        for var in (kind_var, trig_var, fmt_var, regex_var, check_var, level_var):
-            var.trace_add("write", lambda *_a: refresh())
-        refresh()
-
-        def ok() -> None:
-            new_rule = current()
-            if not new_rule.kind:
-                messagebox.showwarning("缺内容", "类型名不能为空", parent=win)
-                return
-            if not new_rule.triggers and new_rule.fmt != "regex":
-                messagebox.showwarning("缺内容", "至少填一个触发词", parent=win)
-                return
-            if new_rule.fmt == "regex" and not new_rule.regex:
-                messagebox.showwarning("缺内容", "选了自定义正则，但正则没填", parent=win)
-                return
-            if index is None:
-                self.pii.customs.append(new_rule)
-            else:
-                self.pii.customs[index] = new_rule
-            self._save_pii()
-            self._refresh_pii_list()
-            self._preview_pii()
-            win.destroy()
-            self._set_status(f"已保存规则：{new_rule.kind}")
-
-        bar = tk.Frame(win, bg=BG)
-        bar.pack(fill="x", padx=22, pady=14)
-        self._soft_button(bar, "确定", ok, primary=True, pad=24).pack(side="right")
-        self._soft_button(bar, "取消", win.destroy, pad=18).pack(side="right",
-                                                                  padx=(0, 8))
-
-        win.bind("<Return>", lambda _e: ok())
-        win.bind("<Escape>", lambda _e: win.destroy())
-        kind_entry.focus_set()
-        win.update_idletasks()
-        win.geometry("+%d+%d" % (self.winfo_rootx() + 120, self.winfo_rooty() + 90))
-
-    def _preview_pii(self) -> None:
-        from . import pii as pii_mod
-        text = self.pv_input.get("1.0", "end").strip()
-        hits = pii_mod.scan(text, settings=self.pii) if text else []
-        if not text:
-            lines = ["（在上面贴一段文本）"]
-        elif not hits:
-            lines = ["没有命中任何隐私规则。"]
-        else:
-            lines = [f"{h.level}  {h.kind:<6} {h.masked:<22} {h.reason}" for h in hits]
-            lines.append("")
-            lines.append("摘要：" + pii_mod.summary(hits))
-        self.pv_out.configure(state="normal")
-        self.pv_out.delete("1.0", "end")
-        self.pv_out.insert("1.0", "\n".join(lines))
-        self.pv_out.configure(state="disabled")
 
     # ------------------------------------------------------------ 页面：设置
     def _page_about(self) -> tk.Frame:
