@@ -287,6 +287,11 @@ class App(tk.Tk):
                         relief="flat", font=("Microsoft YaHei UI", 9, "bold"))
         style.map("Treeview", background=[("selected", ACCENT_LIGHT)],
                   foreground=[("selected", TEXT)])
+        style.configure("TCombobox", padding=5, arrowsize=14)
+        style.map("TCombobox",
+                  fieldbackground=[("readonly", FIELD)],
+                  selectbackground=[("readonly", FIELD)],
+                  selectforeground=[("readonly", TEXT)])
         style.configure("Horizontal.TProgressbar", troughcolor="#EFF1F5",
                         background=ACCENT, borderwidth=0, thickness=8)
 
@@ -400,6 +405,23 @@ class App(tk.Tk):
                  anchor="w").pack(fill="x", padx=28, pady=(18, 0))
         tk.Label(parent, text=sub, bg=BG, fg=MUTED, font=FONT_SMALL,
                  anchor="w").pack(fill="x", padx=28, pady=(2, 10))
+
+    def _soft_button(self, parent, text: str, command, primary: bool = False,
+                     pad: int = 14) -> tk.Button:
+        """统一样式的小按钮：主按钮蓝底白字，次按钮描边，鼠标移上去有反馈。"""
+        btn = tk.Button(parent, text=text, command=command, relief="flat", bd=0,
+                        font=FONT_SMALL, padx=pad, pady=5, cursor="hand2",
+                        bg=ACCENT if primary else CARD,
+                        fg="white" if primary else TEXT,
+                        activebackground="#1D4ED8" if primary else "#F3F6FA",
+                        activeforeground="white" if primary else TEXT)
+        if not primary:
+            btn.configure(highlightbackground=BORDER, highlightthickness=1)
+        normal_bg = ACCENT if primary else CARD
+        hover_bg = "#1D4ED8" if primary else "#F3F6FA"
+        btn.bind("<Enter>", lambda _e: btn.configure(bg=hover_bg))
+        btn.bind("<Leave>", lambda _e: btn.configure(bg=normal_bg))
+        return btn
 
     def _card(self, parent: tk.Frame) -> tk.Frame:
         wrap = tk.Frame(parent, bg=BG)
@@ -842,9 +864,8 @@ class App(tk.Tk):
         head.pack(fill="x", padx=16, pady=(4, 2))
         tk.Label(head, text="自定义规则", bg=CARD, fg=TEXT, font=FONT_H2,
                  anchor="w").pack(side="left")
-        tk.Button(head, text="+ 新增", command=self._add_pii_rule, bg=CARD, fg=ACCENT,
-                  relief="flat", bd=0, font=FONT_SMALL, cursor="hand2",
-                  padx=8).pack(side="right")
+        self._soft_button(head, "＋ 新增规则", self._add_pii_rule,
+                          primary=True, pad=14).pack(side="right", pady=(0, 2))
 
         self.pii_list = tk.Listbox(left, height=5, font=FONT_SMALL, bg=FIELD, fg=TEXT,
                                    relief="flat", highlightthickness=1,
@@ -856,10 +877,7 @@ class App(tk.Tk):
         for text, cmd in (("编辑", self._edit_pii_rule),
                           ("删除", self._delete_pii_rule),
                           ("恢复默认", self._reset_pii_rules)):
-            tk.Button(btns, text=text, command=cmd, bg=CARD, fg=TEXT, relief="flat",
-                      highlightbackground=BORDER, highlightthickness=1, bd=0,
-                      font=FONT_SMALL, padx=12, pady=4,
-                      cursor="hand2").pack(side="left", padx=(0, 8))
+            self._soft_button(btns, text, cmd, pad=12).pack(side="left", padx=(0, 8))
 
         # 右：示例 + 预览
         right = tk.Frame(wrap, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
@@ -948,21 +966,32 @@ class App(tk.Tk):
         self._set_status("已恢复默认（内置全开，自定义清空）")
 
     def _pii_dialog(self, index: int | None) -> None:
-        from .pii import FORMATS, CustomRule
+        from .pii import CustomRule
 
         rule = (self.pii.customs[index] if index is not None
                 else CustomRule("", [], "num", "", "", "P1"))
+
         win = tk.Toplevel(self)
         win.title("编辑规则" if index is not None else "新增规则")
-        win.configure(bg=CARD)
+        win.configure(bg=BG)
         win.transient(self)
         win.grab_set()
         win.resizable(False, False)
 
-        def label(text: str, r: int) -> None:
-            tk.Label(win, text=text, bg=CARD, fg=TEXT, font=FONT_SMALL,
-                     anchor="w", width=10).grid(row=r, column=0, sticky="w",
-                                                padx=(16, 6), pady=6)
+        # 顶部标题
+        head = tk.Frame(win, bg=BG)
+        head.pack(fill="x", padx=22, pady=(18, 6))
+        tk.Label(head, text="编辑隐私规则" if index is not None else "新增隐私规则",
+                 bg=BG, fg=TEXT, font=FONT_TITLE).pack(anchor="w")
+        tk.Label(head, text="触发词决定在哪种上下文里找；值格式决定找什么样的值。",
+                 bg=BG, fg=MUTED, font=("Microsoft YaHei UI", 8)).pack(anchor="w",
+                                                                      pady=(2, 0))
+
+        card = tk.Frame(win, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
+        card.pack(fill="both", expand=True, padx=22)
+        body = tk.Frame(card, bg=CARD)
+        body.pack(fill="both", expand=True, padx=18, pady=14)
+        body.columnconfigure(1, weight=1)
 
         kind_var = tk.StringVar(value=rule.kind)
         trig_var = tk.StringVar(value="，".join(rule.triggers))
@@ -974,53 +1003,69 @@ class App(tk.Tk):
         level_var = tk.StringVar(value=rule.level)
         preview_var = tk.StringVar()
 
-        label("类型名", 0)
-        tk.Entry(win, textvariable=kind_var, width=34, font=FONT_SMALL).grid(
-            row=0, column=1, sticky="w", pady=6)
-        label("触发词", 1)
-        tk.Entry(win, textvariable=trig_var, width=34, font=FONT_SMALL).grid(
-            row=1, column=1, sticky="w", pady=6)
-        tk.Label(win, text="多个用逗号分隔，如：病历号，住院号", bg=CARD, fg=MUTED,
-                 font=("Microsoft YaHei UI", 8)).grid(row=1, column=1, sticky="w",
-                                                      pady=(28, 0))
+        def field(label: str, row: int, hint: str = "") -> None:
+            tk.Label(body, text=label, bg=CARD, fg=TEXT, font=FONT_SMALL,
+                     anchor="w", width=9).grid(row=row, column=0, sticky="w",
+                                               pady=(8, 0), padx=(0, 10))
+            if hint:
+                tk.Label(body, text=hint, bg=CARD, fg=MUTED,
+                         font=("Microsoft YaHei UI", 8), anchor="w").grid(
+                    row=row, column=2, sticky="w", padx=(10, 0), pady=(8, 0))
 
-        label("值格式", 2)
-        fmt_box = ttk.Combobox(win, textvariable=fmt_var, width=12, state="readonly",
-                               values=["纯数字", "字母+数字", "身份证", "银行卡", "自定义正则"])
-        fmt_box.grid(row=2, column=1, sticky="w", pady=6)
+        def entry(row: int, var: tk.StringVar, font=FONT_SMALL) -> tk.Entry:
+            e = tk.Entry(body, textvariable=var, font=font, bg=FIELD, fg=TEXT,
+                         relief="flat", highlightthickness=1,
+                         highlightbackground=BORDER, highlightcolor=ACCENT)
+            e.grid(row=row, column=1, sticky="ew", pady=(8, 0), ipady=6)
+            return e
 
-        label("自定义正则", 3)
-        regex_entry = tk.Entry(win, textvariable=regex_var, width=34, font=("Consolas", 9))
-        regex_entry.grid(row=3, column=1, sticky="w", pady=6)
+        def combo(row: int, var: tk.StringVar, values: list[str]) -> ttk.Combobox:
+            c = ttk.Combobox(body, textvariable=var, values=values, state="readonly",
+                             width=14)
+            c.grid(row=row, column=1, sticky="w", pady=(8, 0))
+            return c
 
-        label("校验", 4)
-        ttk.Combobox(win, textvariable=check_var, width=12, state="readonly",
-                     values=["无", "身份证", "银行卡"]).grid(row=4, column=1,
-                                                             sticky="w", pady=6)
-        label("等级", 5)
-        ttk.Combobox(win, textvariable=level_var, width=12, state="readonly",
-                     values=["P0", "P1", "P2"]).grid(row=5, column=1, sticky="w", pady=6)
+        field("类型名", 0, "会显示在告警里")
+        kind_entry = entry(0, kind_var, FONT)
+        field("触发词", 1, "逗号分隔，如：病历号，住院号")
+        trig_entry = entry(1, trig_var, FONT_SMALL)
+        field("值格式", 2, "决定值长什么样")
+        combo(2, fmt_var, ["纯数字", "字母+数字", "身份证", "银行卡", "自定义正则"])
+        field("自定义正则", 3, "仅上面选「自定义正则」时需要")
+        regex_entry = entry(3, regex_var, ("Consolas", 9))
+        field("校验", 4, "校验位不通过会降为 P1")
+        combo(4, check_var, ["无", "身份证", "银行卡"])
+        field("等级", 5, "P0 建议阻断，P2 只提示")
+        combo(5, level_var, ["P0", "P1", "P2"])
 
-        tk.Label(win, textvariable=preview_var, bg=CARD, fg=MUTED,
-                 font=("Consolas", 9), wraplength=360, justify="left").grid(
-            row=6, column=0, columnspan=2, sticky="w", padx=16, pady=(4, 0))
+        # 预览
+        preview_box = tk.Frame(body, bg="#F7F9FC", highlightbackground=BORDER,
+                               highlightthickness=1)
+        preview_box.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(14, 2))
+        tk.Label(preview_box, text="实际使用的正则", bg="#F7F9FC", fg=MUTED,
+                 font=("Microsoft YaHei UI", 8), anchor="w").pack(
+            fill="x", padx=12, pady=(8, 0))
+        tk.Label(preview_box, textvariable=preview_var, bg="#F7F9FC", fg=TEXT,
+                 font=("Consolas", 9), anchor="w", justify="left",
+                 wraplength=430).pack(fill="x", padx=12, pady=(2, 10))
 
         def current() -> CustomRule:
-            fmt_name = fmt_var.get()
             fmt = {"纯数字": "num", "字母+数字": "alpha", "身份证": "id",
-                   "银行卡": "card", "自定义正则": "regex"}.get(fmt_name, "num")
+                   "银行卡": "card", "自定义正则": "regex"}.get(fmt_var.get(), "num")
             check = {"无": "", "身份证": "id", "银行卡": "luhn"}[check_var.get()]
-            trig = [t.strip() for t in trig_var.get().replace("|", "，").split("，") if t.strip()]
-            return CustomRule(kind_var.get().strip(), trig, fmt, regex_var.get().strip(),
-                              check, level_var.get())
+            trig = [t.strip() for t in
+                    trig_var.get().replace("|", "，").split("，") if t.strip()]
+            return CustomRule(kind_var.get().strip(), trig, fmt,
+                              regex_var.get().strip(), check, level_var.get())
 
         def refresh(_e=None) -> None:
-            state = "normal" if fmt_var.get() == "自定义正则" else "disabled"
-            regex_entry.configure(state=state)
+            regex_entry.configure(
+                state="normal" if fmt_var.get() == "自定义正则" else "disabled",
+                disabledbackground="#ECEEF1", disabledforeground="#9AA0A6")
             try:
-                preview_var.set("预览：" + current().pattern())
+                preview_var.set(current().pattern())
             except Exception:                        # noqa: BLE001
-                preview_var.set("预览：正则有问题")
+                preview_var.set("（正则有问题，检查一下）")
 
         for var in (kind_var, trig_var, fmt_var, regex_var, check_var, level_var):
             var.trace_add("write", lambda *_a: refresh())
@@ -1047,15 +1092,17 @@ class App(tk.Tk):
             win.destroy()
             self._set_status(f"已保存规则：{new_rule.kind}")
 
-        bar = tk.Frame(win, bg=CARD)
-        bar.grid(row=7, column=0, columnspan=2, sticky="e", padx=16, pady=12)
-        tk.Button(bar, text="确定", command=ok, bg=ACCENT, fg="white", relief="flat",
-                  bd=0, font=FONT_SMALL, padx=18, pady=4,
-                  cursor="hand2").pack(side="left", padx=(0, 8))
-        tk.Button(bar, text="取消", command=win.destroy, bg=CARD, fg=TEXT,
-                  relief="flat", highlightbackground=BORDER, highlightthickness=1,
-                  bd=0, font=FONT_SMALL, padx=14, pady=4,
-                  cursor="hand2").pack(side="left")
+        bar = tk.Frame(win, bg=BG)
+        bar.pack(fill="x", padx=22, pady=14)
+        self._soft_button(bar, "确定", ok, primary=True, pad=24).pack(side="right")
+        self._soft_button(bar, "取消", win.destroy, pad=18).pack(side="right",
+                                                                  padx=(0, 8))
+
+        win.bind("<Return>", lambda _e: ok())
+        win.bind("<Escape>", lambda _e: win.destroy())
+        kind_entry.focus_set()
+        win.update_idletasks()
+        win.geometry("+%d+%d" % (self.winfo_rootx() + 120, self.winfo_rooty() + 90))
 
     def _preview_pii(self) -> None:
         from . import pii as pii_mod
