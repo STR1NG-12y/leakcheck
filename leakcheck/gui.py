@@ -125,6 +125,9 @@ class Tooltip:
             self._tip = None
 
 
+#: 公共引用库（名言/法条等），放在程序目录下
+PUBLIC_REF = ROOT / "公共引用.txt"
+
 #: 选择索引文件时的过滤器（之前漏了 .idx，导致对话框里什么都看不到）
 IDX_TYPES = [("索引文件", "*.idx"), ("所有文件", "*.*")]
 
@@ -159,6 +162,7 @@ class App(tk.Tk):
         self._source_map: dict = {}
         self._source_binding: dict = {}
         self._source_buttons: dict = {}
+        self._public_ref = None
         self.current_page = "build"
 
         self._ensure_data_files()
@@ -1023,6 +1027,7 @@ class App(tk.Tk):
         self._source_map: dict = {}
         self._source_binding: dict = {}
         self._source_buttons: dict = {}
+        self._public_ref = None
         self.result_hint.config(text=name)
         self.progress.pack(side="right", padx=16, pady=9)
         self.progress.start(12)
@@ -1245,6 +1250,13 @@ class App(tk.Tk):
         self._start_job("语义筛选", job)
 
     # ------------------------------------------------------------ 任务：两阶扫描
+    def _ref_lib(self):
+        """公共引用库：只加载一次。"""
+        if self._public_ref is None:
+            from .publicref import PublicRef
+            self._public_ref = PublicRef(PUBLIC_REF if PUBLIC_REF.exists() else None)
+        return self._public_ref
+
     def run_scan(self) -> None:
         use_index = self.scan_source.get() == "index"
         index = self.scan_index.get().strip() if use_index else ""
@@ -1308,43 +1320,72 @@ class App(tk.Tk):
                 self.events.put(("warn", "选中的内容里没有可识别的文字"))
                 return
 
+            from . import pii as pii_mod
+            ref = self._ref_lib()
             total_hits = 0
+            pii_total = 0
             for name, payload, path in files:
                 hint = self._payload_sensitive_hint(path) if path else ""
                 t1 = time.perf_counter()
                 result = casc.scan(payload, name)
+                pii_hits = pii_mod.scan(payload)
                 cost = f"{(time.perf_counter() - t1) * 1000:.1f} ms"
+
+                # 公共引用（名言/法条）不算泄露
+                kept, public_n = [], 0
+                for item in result.findings:
+                    a, b = item.payload_span
+                    if ref.match(payload[a:b]):
+                        public_n += 1
+                        continue
+                    kept.append(item)
+                result.findings = kept
+
                 if not result.findings:
-                    detail = "没有发现重合内容"
+                    detail = ("公共引用（名言/法条），不计泄露" if public_n
+                              else "没有发现重合内容")
                     if hint:
                         detail += f"　·　{hint}"
-                    self._row(name, "放行", detail, "ok", cost)
-                    continue
-                total_hits += 1
-                seen = set()
-                for item in result.findings:
-                    # 骨架/语义命中如果回原文只有几个字，证据太弱，不占一行
-                    if item.level != "A" and item.length < 12:
-                        continue
-                    key = (item.level, item.doc_id, item.length)
-                    if key in seen:                 # 同一份文档的同类命中只列一次
-                        continue
-                    seen.add(key)
-                    self._row(name, f"{item.level} 级",
-                              f"{item.doc_id} · {LEVEL_DESC.get(item.level, '')} · "
-                              f"{item.length} 字", "bad", cost)
-                if hint:
-                    self._row(name, "提示", hint, "warn", cost)
-                for warn in result.warnings:
-                    self._row(name, "注意", warn, "warn", cost)
+                    if not pii_hits:
+                        self._row(name, "放行", detail, "ok", cost)
+                    else:
+                        self._row(name, "放行", detail, "ok", cost)
+                else:
+                    total_hits += 1
+                    seen = set()
+                    for item in result.findings:
+                        if item.level != "A" and item.length < 12:
+                            continue
+                        key = (item.level, item.doc_id, item.length)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        self._row(name, f"{item.level} 级",
+                                  f"{item.doc_id} · {LEVEL_DESC.get(item.level, '')} · "
+                                  f"{item.length} 字", "bad", cost)
+                    if public_n:
+                        self._row(name, "提示",
+                                  f"{public_n} 段属于公共引用，已排除", "muted", cost)
+                    if hint:
+                        self._row(name, "提示", hint, "warn", cost)
+                    for warn in result.warnings:
+                        self._row(name, "注意", warn, "warn", cost)
+
+                for hit in pii_hits:
+                    pii_total += 1
+                    tag = {"P0": "bad", "P1": "warn", "P2": "muted"}[hit.level]
+                    self._row(name, f"{hit.level} 隐私",
+                              f"{hit.kind}（{hit.masked}）· "
+                              f"{pii_mod.LEVEL_DESC[hit.level]}", tag, cost)
 
             cost = time.perf_counter() - t0
             self.events.put(("timing", f"命中 {total_hits} / {len(files)} 份 · "
                                        f"用时 {cost * 1000:.0f} ms"
                                        f"（建库 {t_index * 1000:.0f} ms）"))
+            pii_note = f"，隐私 {pii_total} 处" if pii_total else ""
             self.events.put(("status", f"完成：两阶扫描 · {doc_count} 份敏感资料，"
                                        f"{len(files)} 份待检测，命中 {total_hits} 条"
-                                       f" · 用时 {cost * 1000:.0f} ms"))
+                                       f"{pii_note} · 用时 {cost * 1000:.0f} ms"))
 
         self._start_job("两阶扫描", job)
 

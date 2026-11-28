@@ -485,10 +485,29 @@ def cmd_scan(args) -> int:
     summary: list[dict] = []
     total_hits = 0
 
+    from . import pii as pii_mod
+    from .publicref import PublicRef
+
+    ref = PublicRef()
+    pii_total = 0
     for name, payload in payloads:
         result = cascade.scan(payload, name)
         for w in result.warnings:
             print(f"   [提示] {w}")
+
+        # 名言/法条这类公共文本不算泄露
+        kept, public_n = [], 0
+        for item in result.findings:
+            a, b = item.payload_span
+            if ref.match(payload[a:b]):
+                public_n += 1
+                continue
+            kept.append(item)
+        result.findings = kept
+
+        pii_hits = pii_mod.scan(payload)
+        pii_total += len(pii_hits)
+
         if result.findings:
             total_hits += 1
 
@@ -496,6 +515,8 @@ def cmd_scan(args) -> int:
             summary.append({
                 "payload": name,
                 "findings": [f.to_dict() for f in result.findings],
+                "public_refs": public_n,
+                "pii": [h.to_dict() for h in pii_hits],
                 "warnings": result.warnings,
             })
             continue
@@ -503,7 +524,10 @@ def cmd_scan(args) -> int:
         if batch:
             top = result.top_level or "放行"
             best = result.findings[0] if result.findings else None
-            detail = (f"{best.doc_id} · {best.length} 字" if best else "没有发现重合内容")
+            detail = (f"{best.doc_id} · {best.length} 字" if best
+                      else ("公共引用，不计泄露" if public_n else "没有发现重合内容"))
+            if pii_hits:
+                detail += f"   [隐私 {pii_mod.summary(pii_hits)}]"
             print(f"{name:<28} {top:>4}   {detail}")
         elif result.findings:
             for f in result.findings:
@@ -518,13 +542,19 @@ def cmd_scan(args) -> int:
         else:
             print("\n[放行] 没有发现与敏感库重合的内容")
 
+        if pii_hits:
+            print("\n[隐私] 疑似个人敏感信息（脱敏显示）")
+            for hit in pii_hits:
+                print(f"   {hit.level}  {hit.kind:<6} {hit.masked:<22} {hit.reason}")
+
     if args.json:
         print(json.dumps(summary if batch else summary[0],
                          ensure_ascii=False, indent=2))
         return 0
 
     if batch:
-        print(f"\n共 {len(payloads)} 条，命中 {total_hits} 条")
+        extra = f"，隐私 {pii_total} 处" if pii_total else ""
+        print(f"\n共 {len(payloads)} 条，命中 {total_hits} 条{extra}")
     return 0
 
 
