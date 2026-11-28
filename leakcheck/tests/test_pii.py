@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from leakcheck import pii
 from leakcheck.publicref import PublicRef
 
@@ -92,3 +93,38 @@ class TestPiiCustomRules(unittest.TestCase):
     def test_custom_rule_ignored_when_invalid(self) -> None:
         hits = pii.scan("普通的一句话", [("坏", "([", "", "P0")])
         self.assertEqual([h for h in hits if h.kind == "坏"], [])
+
+class TestPiiSettings(unittest.TestCase):
+    def test_roundtrip(self) -> None:
+        from leakcheck.pii import CustomRule, Settings
+        st = Settings()
+        st.enabled.discard("phone")
+        st.customs.append(CustomRule("病历号", ["病历号", "住院号"], "alpha", "", "", "P0"))
+        import tempfile, os
+        fd, name = tempfile.mkstemp(suffix=".txt")
+        os.close(fd)
+        try:
+            st.save(Path(name))
+            back = Settings.load(Path(name))
+        finally:
+            os.unlink(name)
+        self.assertNotIn("phone", back.enabled)
+        self.assertIn("id_card", back.enabled)
+        self.assertEqual(back.customs[0].kind, "病历号")
+        self.assertEqual(back.customs[0].level, "P0")
+
+    def test_disabled_type_not_reported(self) -> None:
+        from leakcheck.pii import Settings
+        st = Settings()
+        st.enabled.discard("phone")
+        hits = pii.scan("手机 13800138000，身份证号码：110101199003071233", settings=st)
+        kinds = {h.kind for h in hits}
+        self.assertNotIn("手机号", kinds)
+        self.assertIn("身份证", kinds)
+
+    def test_custom_rule_from_triggers(self) -> None:
+        from leakcheck.pii import CustomRule, Settings
+        st = Settings()
+        st.customs.append(CustomRule("病历号", ["病历号", "住院号"], "alpha", "", "", "P0"))
+        hits = pii.scan("患者病历号：ZY2026001234", settings=st)
+        self.assertTrue(any(h.kind == "病历号" and h.level == "P0" for h in hits))
